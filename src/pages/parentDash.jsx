@@ -208,9 +208,9 @@ export default function ParentDash() {
   }
 
   const s = {
-    shell: { display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "system-ui,sans-serif" },
+    shell: { display: "flex", height: "100vh", overflow: "hidden", background: C.bg, fontFamily: "system-ui,sans-serif" },
     sidebar: {
-      width: "240px", minHeight: "100vh", background: "linear-gradient(180deg,#1a1a2e,#16213e)",
+      width: "240px", height: "100vh", overflowY: "auto", background: "linear-gradient(180deg,#1a1a2e,#16213e)",
       padding: "30px 0", display: "flex", flexDirection: "column", flexShrink: 0
     },
     sbLogo: { color: "white", fontWeight: "800", fontSize: "22px", padding: "0 24px 28px", letterSpacing: "0.5px" },

@@ -68,9 +68,9 @@ export default function AdminDash() {
   const filtered = filter === "all" ? users : users.filter((u) => u.role === filter);
 
   const s = {
-    shell: { display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "system-ui,sans-serif" },
+    shell: { display: "flex", height: "100vh", overflow: "hidden", background: C.bg, fontFamily: "system-ui,sans-serif" },
     sidebar: {
-      width: "240px", minHeight: "100vh",
+      width: "240px", height: "100vh", overflowY: "auto",
       background: "linear-gradient(180deg,#0f172a,#1e293b)",
       padding: "30px 0", display: "flex", flexDirection: "column", flexShrink: 0
     },
