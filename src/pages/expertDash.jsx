@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import {
+  collection, onSnapshot, query, orderBy,
+  doc, updateDoc, addDoc, serverTimestamp
+} from "firebase/firestore";
+import { db } from "../firebase";
 
-const CONSULTATIONS = [
+const DEMO_CONSULTATIONS = [
   { id: 1, childName: "Aarav Sharma", parentName: "Rahul Sharma", age: 2, concern: "Delayed speech development", status: "pending", date: "Mar 20" },
   { id: 2, childName: "Priya Mehta",  parentName: "Anita Mehta",  age: 5, concern: "Recurring fever and weight loss", status: "pending", date: "Mar 21" },
   { id: 3, childName: "Kabir Singh",  parentName: "Vijay Singh",  age: 1, concern: "Growth check — low height for age", status: "reviewed", date: "Mar 15" },
@@ -23,9 +28,19 @@ export default function ExpertDash() {
   const [activeTab, setActiveTab] = useState("overview");
   const [selected, setSelected] = useState(null);
   const [note, setNote] = useState("");
-  const [consultations, setConsultations] = useState(CONSULTATIONS);
+  const [consultations, setConsultations] = useState(DEMO_CONSULTATIONS);
+  const [assessments, setAssessments] = useState([]);
 
   const name = userProfile?.displayName || currentUser?.displayName || "Expert";
+
+  /* ── Load child assessments from Firestore (real-time) ── */
+  useEffect(() => {
+    const q = query(collection(db, "assessments"), orderBy("timestamp", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setAssessments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
 
   async function handleLogout() {
     await logout();
@@ -39,6 +54,16 @@ export default function ExpertDash() {
     setSelected(null);
     setNote("");
   }
+
+  /* Group assessments by child */
+  const assessmentsByChild = assessments.reduce((acc, a) => {
+    const key = a.childName || a.childUid || "Unknown";
+    if (!acc[key]) acc[key] = { name: key, total: 0, correct: 0, entries: [] };
+    acc[key].total += 1;
+    if (a.correct) acc[key].correct += 1;
+    acc[key].entries.push(a);
+    return acc;
+  }, {});
 
   const s = {
     shell: { display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "system-ui,sans-serif" },
@@ -135,8 +160,8 @@ export default function ExpertDash() {
 
             <div style={s.statsRow}>
               <div style={s.statCard(C.purple)}>
-                <div style={s.statVal}>12</div>
-                <div style={s.statLabel}>Children Assigned</div>
+                <div style={s.statVal}>{Object.keys(assessmentsByChild).length || 0}</div>
+                <div style={s.statLabel}>Children Assessed</div>
               </div>
               <div style={s.statCard(C.orange)}>
                 <div style={s.statVal}>{consultations.filter((c) => c.status === "pending").length}</div>
@@ -229,25 +254,56 @@ export default function ExpertDash() {
           <>
             <div style={s.pageHeader}>
               <h1 style={s.h1}>Growth Insights 📊</h1>
-              <p style={s.sub}>Aggregate health trends across your assigned children.</p>
+              <p style={s.sub}>Child assessment results and health trends.</p>
             </div>
 
-            <div style={s.card}>
-              <div style={s.cardTitle}>Health Status Distribution</div>
-              {[
-                { label: "Normal",         val: 67, color: C.green },
-                { label: "Overweight",     val: 18, color: C.orange },
-                { label: "Stunted Growth", val: 15, color: C.red },
-              ].map((row) => (
-                <div key={row.label} style={s.barRow}>
-                  <div style={s.barLabel}>{row.label}</div>
-                  <div style={s.barTrack}>
-                    <div style={s.barFill(row.val, row.color)} />
-                  </div>
-                  <div style={s.barVal}>{row.val}%</div>
-                </div>
-              ))}
-            </div>
+            {/* Live child assessments from Firestore */}
+            {Object.keys(assessmentsByChild).length > 0 ? (
+              <div style={s.card}>
+                <div style={s.cardTitle}>Child Assessment Results (Live)</div>
+                {Object.values(assessmentsByChild).map((child) => {
+                  const pct = Math.round((child.correct / child.total) * 100);
+                  return (
+                    <div key={child.name} style={{ marginBottom: "20px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                        <div style={{ fontWeight: "700", color: "#0f172a" }}>{child.name}</div>
+                        <div style={{ fontSize: "13px", color: "#64748b" }}>
+                          {child.correct}/{child.total} correct ({pct}%)
+                        </div>
+                      </div>
+                      <div style={s.barRow}>
+                        <div style={s.barTrack}>
+                          <div style={s.barFill(pct, pct >= 70 ? C.green : pct >= 40 ? C.orange : C.red)} />
+                        </div>
+                        <div style={s.barVal}>{pct}%</div>
+                      </div>
+                      <div style={{ marginTop: "8px" }}>
+                        {child.entries.slice(0, 3).map((e) => (
+                          <div key={e.id} style={{
+                            fontSize: "12px", color: "#64748b",
+                            padding: "5px 0", borderBottom: `1px solid ${C.border}`,
+                            display: "flex", gap: "8px", alignItems: "center"
+                          }}>
+                            <span>{e.correct ? "✅" : "❌"}</span>
+                            <span style={{ flex: 1 }}>{e.question}</span>
+                            <span style={{ color: "#aaa" }}>
+                              {e.timestamp?.toDate ? e.timestamp.toDate().toLocaleDateString("en-IN") : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={s.card}>
+                <div style={s.cardTitle}>Child Assessment Results (Live)</div>
+                <p style={{ color: "#94a3b8", fontSize: "14px" }}>
+                  No assessment data yet. Results will appear here as children complete quizzes.
+                </p>
+              </div>
+            )}
 
             <div style={s.card}>
               <div style={s.cardTitle}>Vaccine Coverage</div>

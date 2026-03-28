@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import {
+  collection, addDoc, onSnapshot, updateDoc,
+  doc, arrayUnion, arrayRemove, serverTimestamp,
+  query, orderBy
+} from "firebase/firestore";
+import { db } from "../firebase";
 
 /* ── Growth Tracker Logic (ported from growth_tracker.py) ── */
 const HEIGHT_STANDARDS = { 1: [70, 78], 2: [82, 92], 5: [100, 115] };
@@ -21,7 +27,7 @@ function analyzeGrowth(ageYears, heightCm, weightKg) {
   return { bmi, status, advice };
 }
 
-/* ── Vaccine Schedule (from VaccineApp logic) ── */
+/* ── Vaccine Schedule ── */
 const VACCINE_SCHEDULE = [
   { ageMonths: 0,   name: "BCG",      desc: "Tuberculosis" },
   { ageMonths: 0,   name: "Hep B1",   desc: "Hepatitis B (Birth dose)" },
@@ -41,22 +47,59 @@ function getVaccinePlan(dobStr) {
   });
 }
 
-/* ── Shared styles ── */
+/* ── Nutrition Plans ── */
+const NUTRITION_PLANS = [
+  {
+    ageGroup: "0–6 Months 🍼",
+    meals: [
+      { emoji: "🤱", label: "Breastfeeding", desc: "Exclusive breastfeeding every 2–3 hours. No water or solids needed." },
+      { emoji: "🍶", label: "Formula", desc: "If formula-fed, 60–90ml per feed for newborns, increasing with age." },
+      { emoji: "💤", label: "Night Feeds", desc: "Normal to wake for feeds every 3–4 hrs. Follow baby's hunger cues." },
+    ],
+    tip: "Never introduce solid foods before 6 months. Breast milk or formula is the complete nutrition source."
+  },
+  {
+    ageGroup: "6–12 Months 🥣",
+    meals: [
+      { emoji: "🥕", label: "Pureed Veggies", desc: "Start with single-ingredient purées — carrot, sweet potato, peas." },
+      { emoji: "🍌", label: "Soft Fruits", desc: "Banana, cooked apple, pear. Mash well to avoid choking." },
+      { emoji: "🌾", label: "Iron-Rich Cereals", desc: "Iron-fortified rice cereal mixed with breast milk or formula." },
+    ],
+    tip: "Introduce one new food every 3 days to check for allergies. Keep breastfeeding alongside solids."
+  },
+  {
+    ageGroup: "1–3 Years 🍽️",
+    meals: [
+      { emoji: "🥚", label: "Protein", desc: "Eggs, dal, paneer, soft cooked chicken — 2–3 servings/day." },
+      { emoji: "🥛", label: "Dairy", desc: "Full-fat milk (500ml/day), curd, cheese for calcium and growth." },
+      { emoji: "🫐", label: "Fruits & Veggies", desc: "5 servings of different colours daily. Avoid fruit juices." },
+    ],
+    tip: "Toddlers need 1,000–1,400 calories/day. Offer 3 meals + 2 healthy snacks. Limit sugar and salt."
+  },
+  {
+    ageGroup: "3–6 Years 🍱",
+    meals: [
+      { emoji: "🍚", label: "Whole Grains", desc: "Brown rice, roti, oats — energy for active growing children." },
+      { emoji: "🥜", label: "Healthy Fats", desc: "A small handful of nuts (no whole nuts under 5), seeds, avocado." },
+      { emoji: "🥦", label: "Greens Daily", desc: "Palak, broccoli, peas — iron and vitamins for brain development." },
+    ],
+    tip: "Involve children in meal prep — it increases willingness to try new foods. Avoid screen time during meals."
+  },
+];
+
+/* ── Shared colors ── */
 const C = {
-  purple: "#6b6bd6",
-  green: "#3aa67c",
-  orange: "#f59e0b",
-  red: "#ef4444",
-  bg: "#f4f6fb",
-  card: "#ffffff",
-  border: "#e8eaf0"
+  purple: "#6b6bd6", green: "#3aa67c", orange: "#f59e0b",
+  red: "#ef4444", bg: "#f4f6fb", card: "#ffffff", border: "#e8eaf0"
 };
 
 const sidebarItems = [
-  { id: "overview",      label: "Overview",        icon: "🏠" },
-  { id: "growth",        label: "Growth Tracker",  icon: "📈" },
-  { id: "vaccines",      label: "Vaccine Planner", icon: "💉" },
-  { id: "resources",     label: "Resources",       icon: "📚" },
+  { id: "overview",   label: "Overview",        icon: "🏠" },
+  { id: "growth",     label: "Growth Tracker",  icon: "📈" },
+  { id: "vaccines",   label: "Vaccine Planner", icon: "💉" },
+  { id: "nutrition",  label: "Nutrition Guide", icon: "🥗" },
+  { id: "community",  label: "Community",       icon: "👥" },
+  { id: "resources",  label: "Resources",       icon: "📚" },
 ];
 
 export default function ParentDash() {
@@ -67,22 +110,58 @@ export default function ParentDash() {
   /* Growth tracker state */
   const [gt, setGt] = useState({ age: "", height: "", weight: "" });
   const [gtResult, setGtResult] = useState(null);
+  const [growthHistory, setGrowthHistory] = useState([]);
 
   /* Vaccine planner state */
   const [dob, setDob] = useState("");
   const [vaccines, setVaccines] = useState([]);
 
+  /* Community state */
+  const [posts, setPosts] = useState([]);
+  const [newPost, setNewPost] = useState("");
+  const [posting, setPosting] = useState(false);
+
   const name = userProfile?.displayName || currentUser?.displayName || "Parent";
+
+  /* ── Load community posts (real-time) ── */
+  useEffect(() => {
+    const q = query(collection(db, "community"), orderBy("timestamp", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setPosts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
+
+  /* ── Load growth history (real-time) ── */
+  useEffect(() => {
+    if (!currentUser) return;
+    const q = query(
+      collection(db, "users", currentUser.uid, "growthHistory"),
+      orderBy("timestamp", "desc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setGrowthHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, [currentUser]);
 
   async function handleLogout() {
     await logout();
     navigate("/");
   }
 
-  function runGrowthTracker(e) {
+  /* ── Growth tracker — saves to Firestore ── */
+  async function runGrowthTracker(e) {
     e.preventDefault();
     const result = analyzeGrowth(+gt.age, +gt.height, +gt.weight);
     setGtResult(result);
+    if (currentUser) {
+      await addDoc(collection(db, "users", currentUser.uid, "growthHistory"), {
+        age: +gt.age, height: +gt.height, weight: +gt.weight,
+        bmi: result.bmi, status: result.status,
+        timestamp: serverTimestamp()
+      });
+    }
   }
 
   function runVaccinePlan(e) {
@@ -90,7 +169,44 @@ export default function ParentDash() {
     setVaccines(getVaccinePlan(dob));
   }
 
-  /* ── Styles ── */
+  /* ── Community: submit post ── */
+  async function submitPost(e) {
+    e.preventDefault();
+    if (!newPost.trim()) return;
+    setPosting(true);
+    try {
+      await addDoc(collection(db, "community"), {
+        uid: currentUser.uid,
+        displayName: name,
+        content: newPost.trim(),
+        likes: [],
+        likesCount: 0,
+        timestamp: serverTimestamp()
+      });
+      setNewPost("");
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  /* ── Community: toggle like ── */
+  async function toggleLike(post) {
+    if (!currentUser) return;
+    const ref = doc(db, "community", post.id);
+    const liked = post.likes?.includes(currentUser.uid);
+    await updateDoc(ref, {
+      likes: liked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
+      likesCount: liked ? Math.max(0, (post.likesCount || 1) - 1) : (post.likesCount || 0) + 1
+    });
+  }
+
+  /* ── Style helpers ── */
+  function statusColor(status) {
+    if (status === "Normal") return C.green;
+    if (status === "Overweight") return C.orange;
+    return C.red;
+  }
+
   const s = {
     shell: { display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "system-ui,sans-serif" },
     sidebar: {
@@ -104,8 +220,7 @@ export default function ParentDash() {
       background: active ? "rgba(107,107,214,0.3)" : "transparent",
       borderRight: active ? `3px solid ${C.purple}` : "3px solid transparent",
       color: active ? "white" : "rgba(255,255,255,0.6)",
-      fontSize: "14px", fontWeight: active ? "600" : "400",
-      transition: "all 0.2s"
+      fontSize: "14px", fontWeight: active ? "600" : "400", transition: "all 0.2s"
     }),
     sbBottom: { marginTop: "auto", padding: "20px 24px" },
     logoutBtn: {
@@ -149,8 +264,7 @@ export default function ParentDash() {
     resultStatus: (color) => ({ fontSize: "18px", fontWeight: "700", color }),
     resultBMI: { fontSize: "14px", color: "#666", marginTop: "4px" },
     resultAdvice: { fontSize: "14px", color: "#444", marginTop: "10px", lineHeight: "1.6" },
-    /* Vaccine */
-    vaccineRow: (done) => ({
+    vaccineRow: () => ({
       display: "flex", alignItems: "center", gap: "14px",
       padding: "14px 0", borderBottom: `1px solid ${C.border}`
     }),
@@ -169,7 +283,6 @@ export default function ParentDash() {
       background: done ? "#dcfce7" : "#fef9c3",
       padding: "4px 10px", borderRadius: "20px"
     }),
-    /* Resources */
     resourceGrid: { display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "16px" },
     resourceCard: {
       padding: "20px", borderRadius: "14px", border: `1.5px solid ${C.border}`,
@@ -177,15 +290,19 @@ export default function ParentDash() {
     },
     resourceEmoji: { fontSize: "28px", marginBottom: "10px" },
     resourceTitle: { fontWeight: "700", color: "#1a1a2e", marginBottom: "4px" },
-    resourceSub: { fontSize: "13px", color: "#888" }
+    resourceSub: { fontSize: "13px", color: "#888" },
+    /* Community */
+    postCard: {
+      background: C.card, borderRadius: "16px", padding: "22px 26px",
+      boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: "18px"
+    },
+    avatar: {
+      width: "38px", height: "38px", borderRadius: "50%",
+      background: "linear-gradient(135deg,#6b6bd6,#8b5cf6)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      color: "white", fontWeight: "700", fontSize: "16px", flexShrink: 0
+    },
   };
-
-  /* ── Status color helper ── */
-  function statusColor(status) {
-    if (status === "Normal") return C.green;
-    if (status === "Overweight") return C.orange;
-    return C.red;
-  }
 
   return (
     <div style={s.shell}>
@@ -195,20 +312,14 @@ export default function ParentDash() {
         <div style={s.sbLogo}>KidRoots</div>
 
         {sidebarItems.map((item) => (
-          <div
-            key={item.id}
-            style={s.sbItem(activeTab === item.id)}
-            onClick={() => setActiveTab(item.id)}
-          >
+          <div key={item.id} style={s.sbItem(activeTab === item.id)} onClick={() => setActiveTab(item.id)}>
             <span>{item.icon}</span>
             <span>{item.label}</span>
           </div>
         ))}
 
         <div style={s.sbBottom}>
-          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", marginBottom: "12px" }}>
-            {name}
-          </div>
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", marginBottom: "12px" }}>{name}</div>
           <button style={s.logoutBtn} onClick={handleLogout}>Sign Out</button>
         </div>
       </aside>
@@ -216,7 +327,7 @@ export default function ParentDash() {
       {/* MAIN CONTENT */}
       <main style={s.main}>
 
-        {/* OVERVIEW */}
+        {/* ── OVERVIEW ── */}
         {activeTab === "overview" && (
           <>
             <div style={s.pageHeader}>
@@ -226,12 +337,12 @@ export default function ParentDash() {
 
             <div style={s.statsRow}>
               <div style={s.statCard(C.purple)}>
-                <div style={s.statVal}>3</div>
-                <div style={s.statLabel}>Children Registered</div>
+                <div style={s.statVal}>{growthHistory.length || 0}</div>
+                <div style={s.statLabel}>Growth Records</div>
               </div>
               <div style={s.statCard(C.green)}>
-                <div style={s.statVal}>87%</div>
-                <div style={s.statLabel}>Avg. Health Score</div>
+                <div style={s.statVal}>{posts.length}</div>
+                <div style={s.statLabel}>Community Posts</div>
               </div>
               <div style={s.statCard(C.orange)}>
                 <div style={s.statVal}>2</div>
@@ -245,6 +356,8 @@ export default function ParentDash() {
                 {[
                   { label: "Run Growth Check", icon: "📈", tab: "growth" },
                   { label: "View Vaccine Plan", icon: "💉", tab: "vaccines" },
+                  { label: "Nutrition Guide", icon: "🥗", tab: "nutrition" },
+                  { label: "Community Forum", icon: "👥", tab: "community" },
                   { label: "Browse Resources", icon: "📚", tab: "resources" },
                 ].map((a) => (
                   <button
@@ -265,24 +378,27 @@ export default function ParentDash() {
 
             <div style={s.sectionCard}>
               <div style={s.sectionTitle}>Recent Activity</div>
-              {[
-                { icon: "📈", text: "Growth check completed for Aarav", time: "2 days ago" },
-                { icon: "💉", text: "MMR 1 vaccine scheduled for March 25", time: "3 days ago" },
-                { icon: "📚", text: "Read: Healthy Sleep Habits for Toddlers", time: "1 week ago" },
-              ].map((item, i) => (
-                <div key={i} style={{ display: "flex", gap: "14px", padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
-                  <span style={{ fontSize: "20px" }}>{item.icon}</span>
+              {growthHistory.slice(0, 3).map((h, i) => (
+                <div key={h.id || i} style={{ display: "flex", gap: "14px", padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ fontSize: "20px" }}>📈</span>
                   <div>
-                    <div style={{ fontSize: "14px", color: "#1a1a2e" }}>{item.text}</div>
-                    <div style={{ fontSize: "12px", color: "#aaa", marginTop: "2px" }}>{item.time}</div>
+                    <div style={{ fontSize: "14px", color: "#1a1a2e" }}>
+                      Growth check — {h.status} (BMI {h.bmi}, Age {h.age}y)
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#aaa", marginTop: "2px" }}>
+                      {h.timestamp?.toDate ? h.timestamp.toDate().toLocaleDateString("en-IN") : "Recent"}
+                    </div>
                   </div>
                 </div>
               ))}
+              {growthHistory.length === 0 && (
+                <p style={{ color: "#aaa", fontSize: "14px" }}>No activity yet. Run a growth check to get started!</p>
+              )}
             </div>
           </>
         )}
 
-        {/* GROWTH TRACKER */}
+        {/* ── GROWTH TRACKER ── */}
         {activeTab === "growth" && (
           <>
             <div style={s.pageHeader}>
@@ -325,7 +441,7 @@ export default function ParentDash() {
                     />
                   </div>
                 </div>
-                <button style={s.submitBtn} type="submit">Analyze Growth</button>
+                <button style={s.submitBtn} type="submit">Analyze & Save Growth</button>
               </form>
 
               {gtResult && (
@@ -339,6 +455,44 @@ export default function ParentDash() {
                 </div>
               )}
             </div>
+
+            {/* Growth History */}
+            {growthHistory.length > 0 && (
+              <div style={s.sectionCard}>
+                <div style={s.sectionTitle}>Growth History</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr style={{ background: "#f4f6fb" }}>
+                      {["Date", "Age", "Height (cm)", "Weight (kg)", "BMI", "Status"].map((h) => (
+                        <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: "#555", fontWeight: "600" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {growthHistory.map((h) => (
+                      <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: "10px 14px", color: "#666" }}>
+                          {h.timestamp?.toDate ? h.timestamp.toDate().toLocaleDateString("en-IN") : "—"}
+                        </td>
+                        <td style={{ padding: "10px 14px" }}>{h.age}y</td>
+                        <td style={{ padding: "10px 14px" }}>{h.height}</td>
+                        <td style={{ padding: "10px 14px" }}>{h.weight}</td>
+                        <td style={{ padding: "10px 14px", fontWeight: "600" }}>{h.bmi}</td>
+                        <td style={{ padding: "10px 14px" }}>
+                          <span style={{
+                            padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600",
+                            background: h.status === "Normal" ? "#dcfce7" : h.status === "Overweight" ? "#fef9c3" : "#fee2e2",
+                            color: h.status === "Normal" ? C.green : h.status === "Overweight" ? C.orange : C.red
+                          }}>
+                            {h.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <div style={s.sectionCard}>
               <div style={s.sectionTitle}>WHO Growth Standards Reference</div>
@@ -369,7 +523,7 @@ export default function ParentDash() {
           </>
         )}
 
-        {/* VACCINE PLANNER */}
+        {/* ── VACCINE PLANNER ── */}
         {activeTab === "vaccines" && (
           <>
             <div style={s.pageHeader}>
@@ -433,7 +587,124 @@ export default function ParentDash() {
           </>
         )}
 
-        {/* RESOURCES */}
+        {/* ── NUTRITION GUIDE ── */}
+        {activeTab === "nutrition" && (
+          <>
+            <div style={s.pageHeader}>
+              <h1 style={s.greeting}>Nutrition Guide 🥗</h1>
+              <p style={s.subGreet}>Age-appropriate meal plans and healthy routine suggestions for your child.</p>
+            </div>
+
+            {NUTRITION_PLANS.map((plan, i) => (
+              <div key={i} style={s.sectionCard}>
+                <div style={s.sectionTitle}>{plan.ageGroup}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "16px", marginBottom: "20px" }}>
+                  {plan.meals.map((meal, j) => (
+                    <div key={j} style={{
+                      padding: "18px", borderRadius: "12px",
+                      background: "#f4f6fb", border: `1px solid ${C.border}`
+                    }}>
+                      <div style={{ fontSize: "26px", marginBottom: "10px" }}>{meal.emoji}</div>
+                      <div style={{ fontWeight: "700", color: "#1a1a2e", marginBottom: "6px" }}>{meal.label}</div>
+                      <div style={{ fontSize: "13px", color: "#666", lineHeight: "1.5" }}>{meal.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{
+                  background: "#f0faf5", padding: "14px 18px",
+                  borderRadius: "10px", borderLeft: `3px solid ${C.green}`
+                }}>
+                  <div style={{ fontWeight: "700", color: C.green, marginBottom: "4px", fontSize: "13px" }}>💡 Expert Tip</div>
+                  <div style={{ fontSize: "14px", color: "#444", lineHeight: "1.6" }}>{plan.tip}</div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* ── COMMUNITY ── */}
+        {activeTab === "community" && (
+          <>
+            <div style={s.pageHeader}>
+              <h1 style={s.greeting}>Community 👥</h1>
+              <p style={s.subGreet}>Share experiences, ask questions, and learn from other parents.</p>
+            </div>
+
+            {/* Post Composer */}
+            <div style={s.sectionCard}>
+              <div style={s.sectionTitle}>Share with the Community</div>
+              <form onSubmit={submitPost}>
+                <textarea
+                  placeholder="Share a parenting tip, question, or experience..."
+                  style={{
+                    width: "100%", padding: "14px 16px", borderRadius: "12px",
+                    border: `1.5px solid ${C.border}`, fontSize: "15px",
+                    resize: "vertical", minHeight: "90px", fontFamily: "inherit",
+                    outline: "none", boxSizing: "border-box", background: "#fafafe",
+                    lineHeight: "1.6"
+                  }}
+                  value={newPost}
+                  onChange={(e) => setNewPost(e.target.value)}
+                />
+                <button
+                  style={{ ...s.submitBtn, marginTop: "12px", opacity: (posting || !newPost.trim()) ? 0.6 : 1 }}
+                  type="submit"
+                  disabled={posting || !newPost.trim()}
+                >
+                  {posting ? "Posting..." : "Share with Community"}
+                </button>
+              </form>
+            </div>
+
+            {/* Feed */}
+            {posts.length === 0 && (
+              <div style={{ ...s.sectionCard, textAlign: "center", color: "#aaa", fontSize: "15px", padding: "40px" }}>
+                No posts yet. Be the first to share! 🌱
+              </div>
+            )}
+
+            {posts.map((post) => {
+              const liked = post.likes?.includes(currentUser?.uid);
+              const timeStr = post.timestamp?.toDate
+                ? post.timestamp.toDate().toLocaleDateString("en-IN", {
+                    day: "numeric", month: "short",
+                    hour: "2-digit", minute: "2-digit"
+                  })
+                : "just now";
+              return (
+                <div key={post.id} style={s.postCard}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
+                    <div style={s.avatar}>
+                      {post.displayName?.[0]?.toUpperCase() || "P"}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: "700", fontSize: "15px", color: "#1a1a2e" }}>{post.displayName}</div>
+                      <div style={{ fontSize: "12px", color: "#aaa" }}>{timeStr}</div>
+                    </div>
+                  </div>
+                  <p style={{ fontSize: "15px", color: "#333", lineHeight: "1.7", margin: "0 0 16px" }}>
+                    {post.content}
+                  </p>
+                  <div style={{ display: "flex", gap: "16px", paddingTop: "12px", borderTop: `1px solid ${C.border}` }}>
+                    <button
+                      onClick={() => toggleLike(post)}
+                      style={{
+                        background: "none", border: "none", cursor: "pointer",
+                        fontSize: "14px", fontWeight: "600",
+                        color: liked ? "#ef4444" : "#888",
+                        display: "flex", alignItems: "center", gap: "6px", padding: 0
+                      }}
+                    >
+                      {liked ? "❤️" : "🤍"} {post.likesCount || 0} {post.likesCount === 1 ? "like" : "likes"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── RESOURCES ── */}
         {activeTab === "resources" && (
           <>
             <div style={s.pageHeader}>
