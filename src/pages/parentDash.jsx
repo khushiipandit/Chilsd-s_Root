@@ -4,7 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   collection, addDoc, onSnapshot, updateDoc,
   doc, arrayUnion, arrayRemove, serverTimestamp,
-  query, orderBy
+  query, orderBy, where, getDocs, getDoc
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -120,6 +120,16 @@ export default function ParentDash() {
   const [posts, setPosts] = useState([]);
   const [newPost, setNewPost] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postCategory, setPostCategory] = useState("Special Moment");
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
+
+  /* Child connection state */
+  const [linkedChild, setLinkedChild] = useState(null);
+  const [linkedChildAssessments, setLinkedChildAssessments] = useState([]);
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
 
   const name = userProfile?.displayName || currentUser?.displayName || "Parent";
 
@@ -144,6 +154,58 @@ export default function ParentDash() {
     });
     return unsub;
   }, [currentUser]);
+
+  /* ── Load linked child profile + assessments ── */
+  useEffect(() => {
+    if (!userProfile?.linkedChildUid) { setLinkedChild(null); return; }
+    getDoc(doc(db, "users", userProfile.linkedChildUid)).then((snap) => {
+      if (snap.exists()) setLinkedChild({ uid: snap.id, ...snap.data() });
+    });
+    const q = query(
+      collection(db, "assessments"),
+      where("childUid", "==", userProfile.linkedChildUid),
+      orderBy("timestamp", "desc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setLinkedChildAssessments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, [userProfile?.linkedChildUid]);
+
+  /* ── Link child by email ── */
+  async function linkChildAccount(e) {
+    e.preventDefault();
+    setLinking(true);
+    setLinkError("");
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("email", "==", linkEmail.trim().toLowerCase()),
+        where("role", "==", "child")
+      );
+      const snap = await getDocs(q);
+      if (snap.empty) { setLinkError("No child account found with that email."); return; }
+      const childDoc = snap.docs[0];
+      const childUid = childDoc.id;
+      await updateDoc(doc(db, "users", currentUser.uid), { linkedChildUid: childUid });
+      await updateDoc(doc(db, "users", childUid), { linkedParentUid: currentUser.uid, linkedParentName: name });
+      setLinkedChild({ uid: childUid, ...childDoc.data() });
+      setLinkEmail("");
+    } catch {
+      setLinkError("Something went wrong. Please try again.");
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  /* ── Unlink child ── */
+  async function unlinkChild() {
+    if (!userProfile?.linkedChildUid) return;
+    await updateDoc(doc(db, "users", currentUser.uid), { linkedChildUid: null });
+    await updateDoc(doc(db, "users", userProfile.linkedChildUid), { linkedParentUid: null, linkedParentName: null });
+    setLinkedChild(null);
+    setLinkedChildAssessments([]);
+  }
 
   async function handleLogout() {
     await logout();
@@ -175,15 +237,32 @@ export default function ParentDash() {
     if (!newPost.trim()) return;
     setPosting(true);
     try {
+      let imageUrl = "";
+      if (imageFile) {
+        const formData = new FormData();
+        formData.append("file", imageFile);
+        formData.append("upload_preset", "parenting-platform-major-project");
+        const res = await fetch("https://api.cloudinary.com/v1_1/dkh3saqj0/image/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        imageUrl = data.secure_url;
+      }
       await addDoc(collection(db, "community"), {
         uid: currentUser.uid,
         displayName: name,
         content: newPost.trim(),
+        category: postCategory,
+        imageUrl,
         likes: [],
         likesCount: 0,
         timestamp: serverTimestamp()
       });
       setNewPost("");
+      setPostCategory("Special Moment");
+      setImageFile(null);
+      setImagePreview("");
     } finally {
       setPosting(false);
     }
@@ -341,13 +420,83 @@ export default function ParentDash() {
                 <div style={s.statLabel}>Growth Records</div>
               </div>
               <div style={s.statCard(C.green)}>
-                <div style={s.statVal}>{posts.length}</div>
-                <div style={s.statLabel}>Community Posts</div>
+                <div style={s.statVal}>{linkedChild ? (linkedChild.xp || 0) : "—"}</div>
+                <div style={s.statLabel}>{linkedChild ? `${linkedChild.displayName?.split(" ")[0]}'s XP` : "Child XP"}</div>
               </div>
               <div style={s.statCard(C.orange)}>
-                <div style={s.statVal}>2</div>
-                <div style={s.statLabel}>Vaccines Due</div>
+                <div style={s.statVal}>{linkedChildAssessments.length || 0}</div>
+                <div style={s.statLabel}>Quizzes Taken</div>
               </div>
+            </div>
+
+            {/* ── My Child card ── */}
+            <div style={s.sectionCard}>
+              <div style={s.sectionTitle}>👶 My Child</div>
+              {!linkedChild ? (
+                <form onSubmit={linkChildAccount}>
+                  <p style={{ fontSize: "14px", color: "#666", marginBottom: "14px" }}>
+                    Link your child's KidRoots account to see their progress here.
+                  </p>
+                  <div style={{ display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
+                    <div style={s.fieldWrap}>
+                      <label style={s.fieldLabel}>Child's Email Address</label>
+                      <input
+                        type="email"
+                        placeholder="child@example.com"
+                        style={{ ...s.fieldInput, width: "260px" }}
+                        value={linkEmail}
+                        onChange={(e) => setLinkEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <button style={{ ...s.submitBtn, opacity: linking ? 0.6 : 1 }} type="submit" disabled={linking}>
+                      {linking ? "Linking..." : "Link Account"}
+                    </button>
+                  </div>
+                  {linkError && <p style={{ color: C.red, fontSize: "13px", marginTop: "10px" }}>{linkError}</p>}
+                </form>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
+                    <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "linear-gradient(135deg,#a1c4fd,#c2e9fb)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" }}>
+                      🧒
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: "700", fontSize: "17px", color: "#1a1a2e" }}>{linkedChild.displayName}</div>
+                      <div style={{ fontSize: "13px", color: "#888" }}>Level {Math.floor((linkedChild.xp || 0) / 100) + 1} · {linkedChild.xp || 0} XP</div>
+                    </div>
+                    <button onClick={unlinkChild} style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "white", color: "#888", fontSize: "13px", cursor: "pointer" }}>
+                      Unlink
+                    </button>
+                  </div>
+
+                  {/* XP progress bar */}
+                  <div style={{ marginBottom: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#888", marginBottom: "6px" }}>
+                      <span>XP Progress</span>
+                      <span>{(linkedChild.xp || 0) % 100}/100 to next level</span>
+                    </div>
+                    <div style={{ background: "#e8eaf0", borderRadius: "20px", height: "8px" }}>
+                      <div style={{ width: `${(linkedChild.xp || 0) % 100}%`, background: `linear-gradient(90deg,${C.purple},#8b5cf6)`, borderRadius: "20px", height: "8px", transition: "width 0.4s" }} />
+                    </div>
+                  </div>
+
+                  {/* Recent quiz results */}
+                  <div style={{ fontSize: "14px", fontWeight: "700", color: "#1a1a2e", marginBottom: "10px" }}>Recent Quiz Results</div>
+                  {linkedChildAssessments.length === 0 && (
+                    <p style={{ fontSize: "14px", color: "#aaa" }}>No quizzes taken yet.</p>
+                  )}
+                  {linkedChildAssessments.slice(0, 4).map((a) => (
+                    <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <span style={{ fontSize: "18px" }}>{a.correct ? "✅" : "❌"}</span>
+                      <div style={{ flex: 1, fontSize: "13px", color: "#444" }}>{a.question}</div>
+                      <span style={{ fontSize: "12px", fontWeight: "700", color: a.correct ? C.green : C.red }}>
+                        {a.correct ? `+${a.xpEarned} XP` : "0 XP"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={s.sectionCard}>
@@ -623,86 +772,248 @@ export default function ParentDash() {
         )}
 
         {/* ── COMMUNITY ── */}
-        {activeTab === "community" && (
-          <>
-            <div style={s.pageHeader}>
-              <h1 style={s.greeting}>Community 👥</h1>
-              <p style={s.subGreet}>Share experiences, ask questions, and learn from other parents.</p>
-            </div>
+        {activeTab === "community" && (() => {
+          const CATEGORIES = [
+            { value: "Special Moment", emoji: "📸" },
+            { value: "Activity Together", emoji: "🎮" },
+            { value: "Parenting Tip", emoji: "💡" },
+            { value: "Health & Growth", emoji: "🌱" },
+            { value: "Question / Help", emoji: "❓" },
+            { value: "General", emoji: "💬" },
+          ];
+          const catEmoji = (cat) => CATEGORIES.find((c) => c.value === cat)?.emoji || "💬";
 
-            {/* Post Composer */}
-            <div style={s.sectionCard}>
-              <div style={s.sectionTitle}>Share with the Community</div>
-              <form onSubmit={submitPost}>
-                <textarea
-                  placeholder="Share a parenting tip, question, or experience..."
-                  style={{
-                    width: "100%", padding: "14px 16px", borderRadius: "12px",
-                    border: `1.5px solid ${C.border}`, fontSize: "15px",
-                    resize: "vertical", minHeight: "90px", fontFamily: "inherit",
-                    outline: "none", boxSizing: "border-box", background: "#fafafe",
-                    lineHeight: "1.6"
-                  }}
-                  value={newPost}
-                  onChange={(e) => setNewPost(e.target.value)}
-                />
-                <button
-                  style={{ ...s.submitBtn, marginTop: "12px", opacity: (posting || !newPost.trim()) ? 0.6 : 1 }}
-                  type="submit"
-                  disabled={posting || !newPost.trim()}
-                >
-                  {posting ? "Posting..." : "Share with Community"}
-                </button>
-              </form>
-            </div>
+          const catToTags = {
+            "Special Moment":    ["#SpecialMoment", "#Memories"],
+            "Activity Together": ["#ActivityTogether", "#Bonding"],
+            "Parenting Tip":     ["#ParentingTip", "#Advice"],
+            "Health & Growth":   ["#Health", "#Growth"],
+            "Question / Help":   ["#Question", "#Help"],
+            "General":           ["#General"],
+          };
 
-            {/* Feed */}
-            {posts.length === 0 && (
-              <div style={{ ...s.sectionCard, textAlign: "center", color: "#aaa", fontSize: "15px", padding: "40px" }}>
-                No posts yet. Be the first to share! 🌱
+          const avatarColors = ["#6b6bd6","#3aa67c","#f59e0b","#ef4444","#8b5cf6","#0ea5e9","#ec4899","#14b8a6"];
+          const avatarColor = (name) => avatarColors[(name?.charCodeAt(0) || 0) % avatarColors.length];
+
+          function timeAgo(ts) {
+            if (!ts?.toDate) return "just now";
+            const diff = Date.now() - ts.toDate().getTime();
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return "just now";
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs}h ago`;
+            const days = Math.floor(hrs / 24);
+            return `${days} day${days > 1 ? "s" : ""} ago`;
+          }
+
+          /* Trending topics */
+          const trending = Object.entries(
+            posts.reduce((acc, p) => {
+              const cat = p.category || "General";
+              acc[cat] = (acc[cat] || 0) + 1;
+              return acc;
+            }, {})
+          ).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+          /* Community Impact stats */
+          const questionsAnswered = posts.filter((p) => p.category === "Question / Help").length;
+          const postsWithLikes = posts.filter((p) => (p.likesCount || 0) > 0).length;
+          const satisfactionRate = posts.length > 0 ? Math.round((postsWithLikes / posts.length) * 100) : 0;
+
+          return (
+            <>
+              <div style={s.pageHeader}>
+                <h1 style={s.greeting}>Community 👥</h1>
+                <p style={s.subGreet}>Share experiences, ask questions, and learn from other parents.</p>
               </div>
-            )}
 
-            {posts.map((post) => {
-              const liked = post.likes?.includes(currentUser?.uid);
-              const timeStr = post.timestamp?.toDate
-                ? post.timestamp.toDate().toLocaleDateString("en-IN", {
-                    day: "numeric", month: "short",
-                    hour: "2-digit", minute: "2-digit"
-                  })
-                : "just now";
-              return (
-                <div key={post.id} style={s.postCard}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px" }}>
-                    <div style={s.avatar}>
-                      {post.displayName?.[0]?.toUpperCase() || "P"}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: "700", fontSize: "15px", color: "#1a1a2e" }}>{post.displayName}</div>
-                      <div style={{ fontSize: "12px", color: "#aaa" }}>{timeStr}</div>
-                    </div>
-                  </div>
-                  <p style={{ fontSize: "15px", color: "#333", lineHeight: "1.7", margin: "0 0 16px" }}>
-                    {post.content}
-                  </p>
-                  <div style={{ display: "flex", gap: "16px", paddingTop: "12px", borderTop: `1px solid ${C.border}` }}>
-                    <button
-                      onClick={() => toggleLike(post)}
-                      style={{
-                        background: "none", border: "none", cursor: "pointer",
-                        fontSize: "14px", fontWeight: "600",
-                        color: liked ? "#ef4444" : "#888",
-                        display: "flex", alignItems: "center", gap: "6px", padding: 0
-                      }}
-                    >
-                      {liked ? "❤️" : "🤍"} {post.likesCount || 0} {post.likesCount === 1 ? "like" : "likes"}
-                    </button>
+              {/* Trending Topics */}
+              {trending.length > 0 && (
+                <div style={{ ...s.sectionCard, marginBottom: "20px" }}>
+                  <div style={s.sectionTitle}>🔥 Trending Topics</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "12px" }}>
+                    {trending.map(([cat, count]) => (
+                      <div key={cat} style={{ background: "#f0efff", borderRadius: "20px", padding: "7px 16px", fontSize: "13px", fontWeight: "600", color: "#6b6bd6", display: "flex", alignItems: "center", gap: "6px" }}>
+                        {catEmoji(cat)} {cat}
+                        <span style={{ background: "#6b6bd6", color: "white", borderRadius: "20px", padding: "1px 8px", fontSize: "11px", fontWeight: "700" }}>{count}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              );
-            })}
-          </>
-        )}
+              )}
+
+              {/* Two-column layout */}
+              <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
+
+                {/* ── LEFT: Composer + Feed ── */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+
+                  {/* Post Composer */}
+                  <div style={s.sectionCard}>
+                    <div style={s.sectionTitle}>Share with the Community</div>
+                    <form onSubmit={submitPost}>
+                      <div style={{ marginBottom: "14px" }}>
+                        <div style={{ fontSize: "12px", fontWeight: "700", color: "#888", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>What is this post about?</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                          {CATEGORIES.map((cat) => (
+                            <button
+                              key={cat.value}
+                              type="button"
+                              onClick={() => setPostCategory(cat.value)}
+                              style={{
+                                padding: "6px 14px", borderRadius: "20px", border: "none", cursor: "pointer",
+                                fontSize: "13px", fontWeight: "600",
+                                background: postCategory === cat.value ? "#6b6bd6" : "#f0efff",
+                                color: postCategory === cat.value ? "white" : "#6b6bd6",
+                                transition: "all 0.15s"
+                              }}
+                            >{cat.emoji} {cat.value}</button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <textarea
+                        placeholder="Share a parenting tip, question, or experience..."
+                        style={{
+                          width: "100%", padding: "14px 16px", borderRadius: "12px",
+                          border: `1.5px solid ${C.border}`, fontSize: "15px",
+                          resize: "vertical", minHeight: "90px", fontFamily: "inherit",
+                          outline: "none", boxSizing: "border-box", background: "#fafafe", lineHeight: "1.6"
+                        }}
+                        value={newPost}
+                        onChange={(e) => setNewPost(e.target.value)}
+                      />
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "12px" }}>
+                        <label style={{ cursor: "pointer", padding: "8px 16px", borderRadius: "10px", background: "#f0efff", color: "#6b6bd6", fontWeight: "600", fontSize: "13px", border: "1.5px solid #e0e0ff" }}>
+                          📷 Add Photo
+                          <input type="file" accept="image/*" style={{ display: "none" }}
+                            onChange={(e) => {
+                              const file = e.target.files[0];
+                              if (!file) return;
+                              setImageFile(file);
+                              setImagePreview(URL.createObjectURL(file));
+                            }}
+                          />
+                        </label>
+                        {imagePreview && (
+                          <div style={{ position: "relative", display: "inline-block" }}>
+                            <img src={imagePreview} alt="preview" style={{ width: "60px", height: "60px", objectFit: "cover", borderRadius: "10px", border: `1.5px solid ${C.border}` }} />
+                            <button type="button" onClick={() => { setImageFile(null); setImagePreview(""); }}
+                              style={{ position: "absolute", top: "-6px", right: "-6px", background: "#ef4444", color: "white", border: "none", borderRadius: "50%", width: "18px", height: "18px", cursor: "pointer", fontSize: "10px", fontWeight: "700", lineHeight: "18px", padding: 0 }}
+                            >✕</button>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        style={{ ...s.submitBtn, marginTop: "12px", opacity: (posting || !newPost.trim()) ? 0.6 : 1 }}
+                        type="submit" disabled={posting || !newPost.trim()}
+                      >{posting ? "Posting..." : "Share with Community"}</button>
+                    </form>
+                  </div>
+
+                  {/* Feed */}
+                  {posts.length === 0 && (
+                    <div style={{ ...s.sectionCard, textAlign: "center", color: "#aaa", fontSize: "15px", padding: "40px" }}>
+                      No posts yet. Be the first to share! 🌱
+                    </div>
+                  )}
+
+                  {posts.map((post) => {
+                    const liked = post.likes?.includes(currentUser?.uid);
+                    const tags = catToTags[post.category] || ["#General"];
+                    return (
+                      <div key={post.id} style={{ ...s.postCard, border: `1px solid ${C.border}` }}>
+                        {/* Post header */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                          <div style={{ ...s.avatar, background: avatarColor(post.displayName) }}>
+                            {post.displayName?.[0]?.toUpperCase() || "P"}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: "700", fontSize: "15px", color: "#1a1a2e" }}>{post.displayName}</div>
+                            <div style={{ fontSize: "12px", color: "#aaa" }}>{timeAgo(post.timestamp)}</div>
+                          </div>
+                          <span style={{ fontSize: "16px", color: "#bbb", cursor: "pointer" }}>🔖</span>
+                        </div>
+
+                        {/* Content */}
+                        <p style={{ fontSize: "15px", color: "#333", lineHeight: "1.7", margin: "0 0 12px" }}>{post.content}</p>
+
+                        {/* Photo */}
+                        {post.imageUrl && (
+                          <img src={post.imageUrl} alt="post" style={{ width: "100%", maxHeight: "320px", objectFit: "cover", borderRadius: "12px", marginBottom: "12px" }} />
+                        )}
+
+                        {/* Hashtag pills */}
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
+                          {tags.map((tag) => (
+                            <span key={tag} style={{ background: "#f0efff", color: "#6b6bd6", borderRadius: "20px", padding: "3px 12px", fontSize: "12px", fontWeight: "600" }}>{tag}</span>
+                          ))}
+                        </div>
+
+                        {/* Divider */}
+                        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "12px", display: "flex", justifyContent: "space-around" }}>
+                          <button onClick={() => toggleLike(post)}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: liked ? "#2563eb" : "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}
+                          >
+                            👍 Like ({post.likesCount || 0})
+                          </button>
+                          <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}>
+                            💬 Comment (0)
+                          </button>
+                          <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}>
+                            ↗ Share
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Load More */}
+                  {posts.length > 0 && (
+                    <div style={{ ...s.sectionCard, textAlign: "center", cursor: "pointer", color: "#555", fontWeight: "600", fontSize: "14px", padding: "16px" }}>
+                      Load More Posts
+                    </div>
+                  )}
+                </div>
+
+                {/* ── RIGHT SIDEBAR ── */}
+                <div style={{ width: "260px", flexShrink: 0 }}>
+
+                  {/* Community Impact */}
+                  <div style={{ ...s.sectionCard, marginBottom: "16px" }}>
+                    <div style={s.sectionTitle}>Community Impact</div>
+                    <div style={{ textAlign: "center", padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: "32px", fontWeight: "800", color: C.green }}>{posts.length}</div>
+                      <div style={{ fontSize: "13px", color: "#888", marginTop: "2px" }}>Total Posts</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: "32px", fontWeight: "800", color: C.purple }}>{questionsAnswered}</div>
+                      <div style={{ fontSize: "13px", color: "#888", marginTop: "2px" }}>Questions Asked</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 0" }}>
+                      <div style={{ fontSize: "32px", fontWeight: "800", color: "#8b5cf6" }}>{satisfactionRate}%</div>
+                      <div style={{ fontSize: "13px", color: "#888", marginTop: "2px" }}>Posts Liked</div>
+                    </div>
+                  </div>
+
+                  {/* Quick Links */}
+                  <div style={s.sectionCard}>
+                    <div style={s.sectionTitle}>Quick Links</div>
+                    {["Community Guidelines", "Featured Parents", "Report Content"].map((link) => (
+                      <div key={link} style={{ padding: "12px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, marginBottom: "10px", fontSize: "14px", fontWeight: "500", color: "#333", cursor: "pointer" }}>
+                        {link}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            </>
+          );
+        })()}
 
         {/* ── RESOURCES ── */}
         {activeTab === "resources" && (
