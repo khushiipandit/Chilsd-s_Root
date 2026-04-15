@@ -1,25 +1,17 @@
+import { useLocation } from "react-router-dom";
 import Navbar from "./Navbar";
 
-function GlobalLayout({ children }) {
+const DASHBOARD_PATHS = ["/parent", "/child", "/expert", "/admin", "/auth-redirect"];
 
-  const styles = {
-    wrapper: {
-      position: "relative",
-      width: "100%",
-      minHeight: "100vh"
-    }
-  };
+function GlobalLayout({ children }) {
+  const { pathname } = useLocation();
+  const isDashboard = DASHBOARD_PATHS.some((p) => pathname.startsWith(p));
 
   return (
-
-    <div style={styles.wrapper}>
-
-      <Navbar />
-
+    <div style={{ position: "relative", width: "100%", minHeight: "100vh" }}>
+      {!isDashboard && <Navbar />}
       {children}
-
     </div>
-
   );
 }
 
