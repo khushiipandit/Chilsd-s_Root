@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  doc, getDoc, updateDoc, addDoc,
+  doc, getDoc, updateDoc, addDoc, setDoc,
   collection, serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
@@ -78,6 +78,7 @@ const STORIES_TINY = [
   {
     title: "The Sharing Apple",
     emoji: "🍎",
+    img: "https://picsum.photos/seed/sharing-apple/600/220",
     color: "linear-gradient(135deg,#ffd1d1,#ffb347)",
     textColor: "#1a1a2e",
     value: "Sharing",
@@ -92,6 +93,7 @@ const STORIES_TINY = [
   {
     title: "Be Kind to Animals",
     emoji: "🐕",
+    img: "https://picsum.photos/seed/kind-animals/600/220",
     color: "linear-gradient(135deg,#b5ead7,#c7ceea)",
     textColor: "#1a1a2e",
     value: "Kindness",
@@ -106,6 +108,7 @@ const STORIES_TINY = [
   {
     title: "Sorry Makes It Better",
     emoji: "🤗",
+    img: "https://picsum.photos/seed/sorry-better/600/220",
     color: "linear-gradient(135deg,#fddb92,#d1fdff)",
     textColor: "#1a1a2e",
     value: "Honesty",
@@ -120,6 +123,7 @@ const STORIES_TINY = [
   {
     title: "Wash Your Hands!",
     emoji: "🧼",
+    img: "https://picsum.photos/seed/wash-hands/600/220",
     color: "linear-gradient(135deg,#a8edea,#fed6e3)",
     textColor: "#1a1a2e",
     value: "Health",
@@ -131,6 +135,81 @@ const STORIES_TINY = [
     ],
     lesson: "Always wash your hands before eating! 🏆",
   },
+  {
+    title: "Say Please and Thank You",
+    emoji: "🙏",
+    img: "https://picsum.photos/seed/please-thankyou/600/220",
+    color: "linear-gradient(135deg,#fbc2eb,#a6c1ee)",
+    textColor: "#1a1a2e",
+    value: "Manners",
+    character: "lucy",
+    pages: [
+      { text: "Lucy went to the bakery with her mum. She saw a yummy cupcake.", emoji: "🧁😍" },
+      { text: "Lucy said 'Please can I have a cupcake?' with a big smile.", emoji: "😊" },
+      { text: "The baker gave her one and Lucy said 'Thank you so much!'", emoji: "🙏🎉" },
+    ],
+    lesson: "Please and thank you make everyone happy! 🌟",
+  },
+  {
+    title: "Be Brave, Little Star",
+    emoji: "⭐",
+    img: "https://picsum.photos/seed/brave-star/600/220",
+    color: "linear-gradient(135deg,#f6d365,#fda085)",
+    textColor: "#1a1a2e",
+    value: "Courage",
+    character: "max",
+    pages: [
+      { text: "Max was scared of the dark. He covered his head with his blanket every night.", emoji: "😨🌙" },
+      { text: "His dad gave him a little torch and said, 'Light chases the darkness away!'", emoji: "🔦💛" },
+      { text: "Max clicked the torch on. The room glowed softly. He smiled and fell fast asleep.", emoji: "⭐😴" },
+    ],
+    lesson: "Being brave means trying even when you are a little scared! 🌟",
+  },
+  {
+    title: "Friends Help Each Other",
+    emoji: "🤝",
+    img: "https://picsum.photos/seed/friends-help/600/220",
+    color: "linear-gradient(135deg,#84fab0,#8fd3f4)",
+    textColor: "#1a1a2e",
+    value: "Friendship",
+    character: "zara",
+    pages: [
+      { text: "Zara fell off her bike and scraped her knee. She started to cry.", emoji: "😢🚲" },
+      { text: "Her friend Ben ran over and held her hand.", emoji: "🤝" },
+      { text: "Ben helped her up and walked home with her. Zara felt much better already!", emoji: "😊💛" },
+    ],
+    lesson: "A true friend helps you up when you fall! 💖",
+  },
+  {
+    title: "Don't Litter!",
+    emoji: "🌍",
+    img: "https://picsum.photos/seed/dont-litter/600/220",
+    color: "linear-gradient(135deg,#c3f4c0,#f9f7d9)",
+    textColor: "#1a1a2e",
+    value: "Environment",
+    character: "arlo",
+    pages: [
+      { text: "Arlo finished his juice box at the park and looked for a bin.", emoji: "🧃👀" },
+      { text: "The bin was far away, but Arlo walked all the way to put his rubbish in it.", emoji: "🚶🗑️" },
+      { text: "A butterfly landed on his hand as if to say thank you! The park stayed beautiful.", emoji: "🦋🌸" },
+    ],
+    lesson: "Keep our world clean — every bit of litter we pick up matters! 🌍",
+  },
+  {
+    title: "Feelings Are Okay",
+    emoji: "🌈",
+    img: "https://picsum.photos/seed/feelings-okay/600/220",
+    color: "linear-gradient(135deg,#fddb92,#d1fdff)",
+    textColor: "#1a1a2e",
+    value: "Emotions",
+    character: "nina",
+    pages: [
+      { text: "Nina felt angry when her tower of blocks fell down. She stomped her feet.", emoji: "😡🏗️" },
+      { text: "Her mum said, 'It is okay to feel angry. Take three deep breaths with me.'", emoji: "🌬️💛" },
+      { text: "Nina breathed slowly. Her angry feeling melted away. She built the tower again!", emoji: "🌈😊" },
+    ],
+    lesson: "All feelings are okay. Taking deep breaths helps us calm down! 🌈",
+  },
 ];
 
 /* ── Stories: Kid & Tween (ages 7+) ── */
@@ -138,6 +217,7 @@ const STORIES_KID = [
   {
     title: "The Kind Boy and the Butterfly",
     emoji: "🦋",
+    img: "https://picsum.photos/seed/kind-butterfly/600/220",
     color: "linear-gradient(135deg,#a8edea,#fed6e3)",
     textColor: "#1a1a2e",
     value: "Kindness",
@@ -154,6 +234,7 @@ const STORIES_KID = [
   {
     title: "Riya Tells the Truth",
     emoji: "✨",
+    img: "https://picsum.photos/seed/riya-truth/600/220",
     color: "linear-gradient(135deg,#ffecd2,#fcb69f)",
     textColor: "#1a1a2e",
     value: "Honesty",
@@ -170,6 +251,7 @@ const STORIES_KID = [
   {
     title: "The Sharing Tree",
     emoji: "🌳",
+    img: "https://picsum.photos/seed/sharing-tree/600/220",
     color: "linear-gradient(135deg,#d4fc79,#96e6a1)",
     textColor: "#1a1a2e",
     value: "Respect",
@@ -186,6 +268,7 @@ const STORIES_KID = [
   {
     title: "Safe on the Internet",
     emoji: "🛡️",
+    img: "https://picsum.photos/seed/safe-internet/600/220",
     color: "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
     textColor: "#1a1a2e",
     value: "Safety",
@@ -198,6 +281,91 @@ const STORIES_KID = [
       { text: "Her father was proud of her. 'You did exactly the right thing, Anika. Always tell a trusted adult.'", emoji: "⭐" },
     ],
     lesson: "Never share personal information online. Always tell a trusted adult if something feels wrong."
+  },
+  {
+    title: "The Courage to Be Different",
+    emoji: "🌻",
+    img: "https://picsum.photos/seed/courage-different/600/220",
+    color: "linear-gradient(135deg,#f6d365,#fda085)",
+    textColor: "#1a1a2e",
+    value: "Courage",
+    character: "vikram",
+    pages: [
+      { text: "Vikram loved drawing flowers and painting. Some classmates teased him and said art was not cool.", emoji: "🎨😔" },
+      { text: "Vikram felt sad. But his teacher hung his painting on the wall for the whole school to see.", emoji: "🖼️🏫" },
+      { text: "Other students stopped to admire it. One said, 'I didn't know you were so talented!'", emoji: "😮✨" },
+      { text: "Vikram realised — what makes you different is what makes you special.", emoji: "🌻💛" },
+      { text: "He kept painting, and even started an art club. Soon, many classmates joined him!", emoji: "🎨🤝" },
+    ],
+    lesson: "Never let others make you feel ashamed of who you are. Your uniqueness is your superpower."
+  },
+  {
+    title: "The Power of Gratitude",
+    emoji: "💛",
+    img: "https://picsum.photos/seed/power-gratitude/600/220",
+    color: "linear-gradient(135deg,#fddb92,#d1fdff)",
+    textColor: "#1a1a2e",
+    value: "Gratitude",
+    character: "meera",
+    pages: [
+      { text: "Meera always complained — the food was boring, school was dull, everything was unfair.", emoji: "😒" },
+      { text: "One evening her grandmother said, 'Let's play a game. Name three good things about today.'", emoji: "👵💛" },
+      { text: "Meera thought hard. 'My friend shared her lunch. I scored a goal. I found a cool feather.'", emoji: "🍱⚽🪶" },
+      { text: "She felt a warm glow inside. The day didn't seem so bad after all.", emoji: "☀️😊" },
+      { text: "From then on, Meera wrote three good things in her diary every night. She became a happier person.", emoji: "📖💫" },
+    ],
+    lesson: "Gratitude turns what we have into enough. Find something good in every day."
+  },
+  {
+    title: "Standing Up to Bullying",
+    emoji: "🦁",
+    img: "https://picsum.photos/seed/stand-up-bully/600/220",
+    color: "linear-gradient(135deg,#f093fb,#f5576c)",
+    textColor: "#fff",
+    value: "Bravery",
+    character: "rohan",
+    pages: [
+      { text: "Rohan noticed that a bigger kid always took Siya's lunch at school. Siya looked frightened.", emoji: "😟🍱" },
+      { text: "Rohan wanted to help but was scared. What if the bully turned on him too?", emoji: "😰" },
+      { text: "He thought about it all night. The next day, he walked over and stood beside Siya.", emoji: "🦁🤝" },
+      { text: "'Leave her alone,' Rohan said, his voice shaking but clear. The bully walked away.", emoji: "👊" },
+      { text: "Later, they told a teacher together. Siya said, 'Thank you for being brave enough for both of us.'", emoji: "💖⭐" },
+    ],
+    lesson: "Standing up for others takes great bravery — and it is always the right thing to do."
+  },
+  {
+    title: "Responsibility at Home",
+    emoji: "🏠",
+    img: "https://picsum.photos/seed/responsibility-home/600/220",
+    color: "linear-gradient(135deg,#84fab0,#8fd3f4)",
+    textColor: "#1a1a2e",
+    value: "Responsibility",
+    character: "priya",
+    pages: [
+      { text: "Priya's parents worked hard every day. They always looked tired when they came home.", emoji: "😴💼" },
+      { text: "One evening, Priya decided to set the dinner table and wash the dishes — without being asked.", emoji: "🍽️🧹" },
+      { text: "Her parents came home to a tidy kitchen and smiled in surprise.", emoji: "😊🏠" },
+      { text: "Her mum hugged her. 'You helped so much today, Priya. Thank you.'", emoji: "🤗💛" },
+      { text: "Priya felt proud. She realised helping at home is not a chore — it is how we show love.", emoji: "❤️🌟" },
+    ],
+    lesson: "Taking responsibility at home is a way of showing love and care for your family."
+  },
+  {
+    title: "Dealing with Failure",
+    emoji: "🌱",
+    img: "https://picsum.photos/seed/dealing-failure/600/220",
+    color: "linear-gradient(135deg,#d4fc79,#96e6a1)",
+    textColor: "#1a1a2e",
+    value: "Resilience",
+    character: "arjun",
+    pages: [
+      { text: "Arjun practised hard for the school spelling competition. He felt ready.", emoji: "📚✏️" },
+      { text: "But on the day, he froze. He forgot a word he knew perfectly. He came last.", emoji: "😞" },
+      { text: "He cried on the way home. His dad listened and said, 'Failing is just the first step to learning.'", emoji: "👨‍👦💬" },
+      { text: "Arjun entered again next term. This time he prepared differently — and came second!", emoji: "🥈😄" },
+      { text: "He learned that failing once does not mean failing forever. It means you get to try again.", emoji: "🌱💪" },
+    ],
+    lesson: "Failure is not the end — it is the beginning of a better attempt. Never give up."
   },
 ];
 
@@ -420,6 +588,13 @@ export default function ChildDash() {
   const [gameChoice, setGameChoice] = useState(null);
   const [gameAnswered, setGameAnswered] = useState(false);
 
+  /* ── Screen time ── */
+  const [screenTimeLimit, setScreenTimeLimit] = useState(0);   // minutes
+  const [screenTimeUsed, setScreenTimeUsed] = useState(0);     // seconds
+  const [screenTimeLocked, setScreenTimeLocked] = useState(false);
+  const screenTimeUsedRef = useRef(0);
+  const todayKey = new Date().toLocaleDateString("en-CA");
+
   const name = userProfile?.displayName || currentUser?.displayName || "Explorer";
   const level = Math.floor(xp / 100) + 1;
   const progress = xp % 100;
@@ -453,11 +628,41 @@ export default function ChildDash() {
         } else {
           setShowAgePicker(true);
         }
+        if (data.screenTimeLimit) {
+          setScreenTimeLimit(data.screenTimeLimit);
+          getDoc(doc(db, "users", currentUser.uid, "screenTime", new Date().toLocaleDateString("en-CA"))).then((tSnap) => {
+            const secs = tSnap.exists() ? (tSnap.data().seconds || 0) : 0;
+            screenTimeUsedRef.current = secs;
+            setScreenTimeUsed(secs);
+            if (secs >= data.screenTimeLimit * 60) setScreenTimeLocked(true);
+          });
+        }
       } else {
         setShowAgePicker(true);
       }
     });
   }, [currentUser]);
+
+  /* ── Screen time interval ── */
+  useEffect(() => {
+    if (!currentUser || screenTimeLimit === 0 || screenTimeLocked) return;
+    let localSecs = 0;
+    const interval = setInterval(() => {
+      localSecs++;
+      const total = screenTimeUsedRef.current + localSecs;
+      setScreenTimeUsed(total);
+      if (total >= screenTimeLimit * 60) {
+        setScreenTimeLocked(true);
+        setDoc(doc(db, "users", currentUser.uid, "screenTime", todayKey), { seconds: total }, { merge: true });
+        clearInterval(interval);
+        return;
+      }
+      if (localSecs % 60 === 0) {
+        setDoc(doc(db, "users", currentUser.uid, "screenTime", todayKey), { seconds: total }, { merge: true });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [currentUser, screenTimeLimit, screenTimeLocked]); // eslint-disable-line
 
   /* ── Auto-speak for tiny: quiz ── */
   useEffect(() => {
@@ -614,15 +819,24 @@ export default function ChildDash() {
           <button style={{ padding: "8px 18px", borderRadius: "20px", border: "none", background: "rgba(255,255,255,0.7)", cursor: "pointer", fontWeight: "600", fontSize: "14px" }} onClick={() => { setStoryIdx(null); setStoryPage(0); }}>← Back</button>
         </div>
         <div style={{ padding: "32px" }}>
-          <div style={{ ...card, maxWidth: "660px", margin: "0 auto", textAlign: "center" }}>
-            {/* Character avatar */}
-            <Avatar seed={story.character} size={ageGroup === "tiny" ? 100 : 80} />
-            <div style={{ marginTop: "16px", fontSize: "12px", fontWeight: "700", color: "#6b6bd6", textTransform: "uppercase", letterSpacing: "1px" }}>
-              {story.value} · Page {storyPage + 1} of {story.pages.length}
+          <div style={{ ...card, maxWidth: "660px", margin: "0 auto", textAlign: "center", padding: 0, overflow: "hidden" }}>
+            {/* Story banner image */}
+            <div style={{ position: "relative" }}>
+              <img src={story.img} alt={story.title} style={{ width: "100%", height: ageGroup === "tiny" ? "200px" : "180px", objectFit: "cover", display: "block" }} />
+              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, transparent 30%, rgba(0,0,0,0.45))" }} />
+              <div style={{ position: "absolute", bottom: "16px", left: 0, right: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "12px" }}>
+                <Avatar seed={story.character} size={ageGroup === "tiny" ? 56 : 44} />
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: "10px", fontWeight: "700", color: "rgba(255,255,255,0.8)", textTransform: "uppercase", letterSpacing: "1px" }}>{story.value}</div>
+                  <div style={{ fontSize: ageGroup === "tiny" ? "18px" : "16px", fontWeight: "800", color: "white" }}>{story.title}</div>
+                </div>
+              </div>
             </div>
-            <h2 style={{ fontSize: ageGroup === "tiny" ? "24px" : "22px", fontWeight: "800", color: "#1a1a2e", margin: "8px 0 24px" }}>
-              {story.title}
-            </h2>
+            {/* Page content */}
+            <div style={{ padding: "24px 32px 32px" }}>
+            <div style={{ fontSize: "12px", fontWeight: "600", color: "#6b6bd6", marginBottom: "16px" }}>
+              Page {storyPage + 1} of {story.pages.length}
+            </div>
             <div style={{ fontSize: AG.emojiSize, marginBottom: "20px" }}>{page.emoji}</div>
             <p style={{ fontSize: AG.storyFont, color: "#333", lineHeight: AG.lineH, marginBottom: "28px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
               {page.text}
@@ -652,6 +866,7 @@ export default function ChildDash() {
                 </button>
               )}
             </div>
+            </div>{/* end padding wrapper */}
           </div>
         </div>
       </div>
@@ -661,8 +876,29 @@ export default function ChildDash() {
   /* ══════════════════════════════════════
      MAIN DASHBOARD
   ══════════════════════════════════════ */
+  const remainingSeconds = Math.max(0, screenTimeLimit * 60 - screenTimeUsed);
+  const remainingMins    = Math.floor(remainingSeconds / 60);
+  const remainingSecs    = remainingSeconds % 60;
+  const usagePct         = screenTimeLimit > 0 ? Math.min(100, (screenTimeUsed / (screenTimeLimit * 60)) * 100) : 0;
+
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#ffecd2 0%,#fcb69f 30%,#a1c4fd 70%,#c2e9fb 100%)", fontFamily: "system-ui,sans-serif" }}>
+
+      {/* SCREEN TIME LOCK OVERLAY */}
+      {screenTimeLocked && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,10,40,0.93)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999, fontFamily: "system-ui,sans-serif" }}>
+          <div style={{ fontSize: "80px", marginBottom: "16px" }}>⏰</div>
+          <h1 style={{ color: "white", fontSize: "32px", fontWeight: "800", margin: "0 0 12px" }}>Screen Time's Up!</h1>
+          <p style={{ color: "#ccc", fontSize: "16px", margin: "0 0 8px" }}>You've used your screen time for today.</p>
+          <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 32px" }}>Come back tomorrow for more fun! 🌟</p>
+          <button
+            onClick={handleLogout}
+            style={{ padding: "14px 36px", borderRadius: "30px", border: "none", background: "#6b6bd6", color: "white", fontWeight: "700", fontSize: "16px", cursor: "pointer" }}
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
 
       {/* TOP BAR */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 32px", background: "rgba(255,255,255,0.5)", backdropFilter: "blur(10px)" }}>
@@ -675,6 +911,16 @@ export default function ChildDash() {
           <span style={{ fontSize: "13px", fontWeight: "700", color: "#ec4899" }}>Lv.{level}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {screenTimeLimit > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,0.7)", borderRadius: "20px", padding: "6px 14px" }}>
+              <div style={{ width: "50px", height: "6px", background: "#e8eaf0", borderRadius: "99px", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${usagePct}%`, background: usagePct >= 90 ? "#ef4444" : usagePct >= 70 ? "#f59e0b" : "#3aa67c", borderRadius: "99px", transition: "width 1s" }} />
+              </div>
+              <span style={{ fontSize: "12px", fontWeight: "700", color: usagePct >= 90 ? "#ef4444" : "#6b6bd6" }}>
+                ⏱ {remainingMins}:{String(remainingSecs).padStart(2, "0")}
+              </span>
+            </div>
+          )}
           <span style={{ fontSize: "13px", fontWeight: "600", color: "#6b6bd6" }}>🔥 {streak} day streak</span>
           <button onClick={handleLogout} style={{ padding: "8px 16px", borderRadius: "20px", border: "none", background: "rgba(255,255,255,0.7)", cursor: "pointer", fontWeight: "600", fontSize: "13px" }}>Sign Out</button>
         </div>
@@ -808,15 +1054,25 @@ export default function ChildDash() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: ageGroup === "tiny" ? "1fr 1fr" : "repeat(2,1fr)", gap: "18px" }}>
               {activeStories.map((story, i) => (
-                <div key={i} onClick={() => { setStoryIdx(i); setStoryPage(0); }} style={{ borderRadius: "20px", padding: "26px", background: story.color, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", transition: "transform 0.2s" }}
+                <div key={i} onClick={() => { setStoryIdx(i); setStoryPage(0); }} style={{ borderRadius: "20px", overflow: "hidden", background: story.color, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", transition: "transform 0.2s" }}
                   onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.02)"}
                   onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
                 >
-                  {/* Character avatar */}
-                  <img src={avatarUrl(story.character, "adventurer")} alt="character" style={{ width: ageGroup === "tiny" ? "70px" : "56px", height: ageGroup === "tiny" ? "70px" : "56px", borderRadius: "50%", border: "3px solid rgba(255,255,255,0.8)", marginBottom: "10px", background: "white" }} />
-                  <div style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#6b6bd6", marginBottom: "6px" }}>{story.value}</div>
-                  <div style={{ fontWeight: "800", fontSize: ageGroup === "tiny" ? "18px" : "17px", color: story.textColor, marginBottom: "8px" }}>{story.title}</div>
-                  <div style={{ fontSize: "13px", color: "#555" }}>{story.pages.length} pages · Tap to read</div>
+                  {/* Story illustration */}
+                  <div style={{ position: "relative" }}>
+                    <img src={story.img} alt={story.title} style={{ width: "100%", height: ageGroup === "tiny" ? "130px" : "120px", objectFit: "cover", display: "block" }} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.18))" }} />
+                    <span style={{ position: "absolute", top: "10px", right: "12px", fontSize: "28px" }}>{story.emoji}</span>
+                  </div>
+                  {/* Card info */}
+                  <div style={{ padding: "16px 20px 20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                      <img src={avatarUrl(story.character, "adventurer")} alt="character" style={{ width: "32px", height: "32px", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.8)", background: "white" }} />
+                      <div style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#6b6bd6" }}>{story.value}</div>
+                    </div>
+                    <div style={{ fontWeight: "800", fontSize: ageGroup === "tiny" ? "17px" : "16px", color: story.textColor, marginBottom: "5px" }}>{story.title}</div>
+                    <div style={{ fontSize: "12px", color: "#666" }}>{story.pages.length} pages · Tap to read</div>
+                  </div>
                 </div>
               ))}
             </div>

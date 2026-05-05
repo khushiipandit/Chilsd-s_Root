@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  collection, addDoc, onSnapshot, updateDoc,
+  collection, addDoc, onSnapshot, updateDoc, setDoc,
   doc, arrayUnion, arrayRemove, serverTimestamp,
   query, orderBy, where, getDocs
 } from "firebase/firestore";
@@ -198,6 +198,10 @@ export default function ParentDash() {
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState("");
 
+  /* Screen time control */
+  const [screenLimitInput, setScreenLimitInput] = useState("");
+  const [childTodayUsage, setChildTodayUsage] = useState(null); // seconds
+
   const name = userProfile?.displayName || currentUser?.displayName || "Parent";
 
   /* ── Load community posts (real-time) ── */
@@ -239,6 +243,26 @@ export default function ParentDash() {
     });
     return () => { unsubProfile(); unsubAssessments(); };
   }, [userProfile?.linkedChildUid]);
+
+  /* ── Screen time: watch today's child usage in real-time ── */
+  useEffect(() => {
+    if (!userProfile?.linkedChildUid) { setChildTodayUsage(null); return; }
+    const todayKey = new Date().toLocaleDateString("en-CA");
+    const unsub = onSnapshot(
+      doc(db, "users", userProfile.linkedChildUid, "screenTime", todayKey),
+      (snap) => setChildTodayUsage(snap.exists() ? (snap.data().seconds || 0) : 0)
+    );
+    return unsub;
+  }, [userProfile?.linkedChildUid]);
+
+  /* ── Screen time: save limit to child's Firestore doc ── */
+  async function saveScreenTimeLimit(e) {
+    e.preventDefault();
+    const mins = parseInt(screenLimitInput, 10);
+    if (!linkedChild || isNaN(mins) || mins < 0) return;
+    await updateDoc(doc(db, "users", linkedChild.uid), { screenTimeLimit: mins });
+    setScreenLimitInput("");
+  }
 
   /* ── Link child by email ── */
   async function linkChildAccount(e) {
@@ -707,6 +731,86 @@ export default function ParentDash() {
                 </div>
               )}
             </div>
+
+            {/* Screen Time Control card */}
+            {linkedChild && (
+              <div style={s.sectionCard}>
+                <div style={s.sectionTitle}>⏱ Screen Time Control</div>
+                <p style={{ fontSize: "13px", color: "#666", marginBottom: "16px" }}>
+                  Set a daily time limit for {linkedChild.displayName?.split(" ")[0]}'s app usage.
+                </p>
+
+                {/* Current status */}
+                <div style={{ display: "flex", gap: "16px", marginBottom: "18px", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, background: "#f0f4ff", borderRadius: "10px", padding: "14px", textAlign: "center" }}>
+                    <div style={{ fontSize: "22px", fontWeight: "800", color: C.purple }}>
+                      {linkedChild.screenTimeLimit ? `${linkedChild.screenTimeLimit}m` : "—"}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>Daily Limit</div>
+                  </div>
+                  <div style={{ flex: 1, background: "#f0fff4", borderRadius: "10px", padding: "14px", textAlign: "center" }}>
+                    <div style={{ fontSize: "22px", fontWeight: "800", color: C.green }}>
+                      {childTodayUsage === null ? "—" : childTodayUsage < 60 ? `${childTodayUsage}s` : `${Math.floor(childTodayUsage / 60)}m ${childTodayUsage % 60}s`}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>Used Today</div>
+                  </div>
+                  {linkedChild.screenTimeLimit > 0 && childTodayUsage !== null && (
+                    <div style={{ flex: 1, background: childTodayUsage >= linkedChild.screenTimeLimit * 60 ? "#fff0f0" : "#fffbf0", borderRadius: "10px", padding: "14px", textAlign: "center" }}>
+                      <div style={{ fontSize: "22px", fontWeight: "800", color: childTodayUsage >= linkedChild.screenTimeLimit * 60 ? C.red : C.orange }}>
+                        {childTodayUsage >= linkedChild.screenTimeLimit * 60 ? "Locked" : `${Math.max(0, Math.floor((linkedChild.screenTimeLimit * 60 - childTodayUsage) / 60))}m left`}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>Remaining</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Usage bar */}
+                {linkedChild.screenTimeLimit > 0 && childTodayUsage !== null && (
+                  <div style={{ marginBottom: "18px" }}>
+                    <div style={{ background: "#e8eaf0", borderRadius: "20px", height: "8px" }}>
+                      <div style={{
+                        width: `${Math.min(100, (childTodayUsage / (linkedChild.screenTimeLimit * 60)) * 100)}%`,
+                        background: childTodayUsage >= linkedChild.screenTimeLimit * 60 ? C.red : C.orange,
+                        borderRadius: "20px", height: "8px", transition: "width 0.4s"
+                      }} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Set limit form */}
+                <form onSubmit={saveScreenTimeLimit} style={{ display: "flex", gap: "10px", alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <div style={s.fieldWrap}>
+                    <label style={s.fieldLabel}>Set Daily Limit (minutes, 0 = no limit)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="480"
+                      placeholder={linkedChild.screenTimeLimit ? String(linkedChild.screenTimeLimit) : "e.g. 60"}
+                      style={{ ...s.fieldInput, width: "140px" }}
+                      value={screenLimitInput}
+                      onChange={(e) => setScreenLimitInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <button type="submit" style={{ ...s.submitBtn, marginBottom: "1px" }}>
+                    Save Limit
+                  </button>
+                  {linkedChild.screenTimeLimit > 0 && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await updateDoc(doc(db, "users", linkedChild.uid), { screenTimeLimit: 0 });
+                        const todayKey = new Date().toLocaleDateString("en-CA");
+                        await setDoc(doc(db, "users", linkedChild.uid, "screenTime", todayKey), { seconds: 0 }, { merge: true });
+                      }}
+                      style={{ padding: "10px 16px", borderRadius: "10px", border: `1px solid ${C.border}`, background: "white", color: "#888", fontSize: "13px", cursor: "pointer", marginBottom: "1px" }}
+                    >
+                      Remove Limit
+                    </button>
+                  )}
+                </form>
+              </div>
+            )}
 
             <div style={s.sectionCard}>
               <div style={s.sectionTitle}>Quick Actions</div>
