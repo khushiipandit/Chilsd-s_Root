@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   collection, addDoc, onSnapshot, updateDoc,
   doc, arrayUnion, arrayRemove, serverTimestamp,
-  query, orderBy, where, getDocs, getDoc
+  query, orderBy, where, getDocs
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -87,6 +87,53 @@ const NUTRITION_PLANS = [
   },
 ];
 
+/* ── Mood Analysis ── */
+const MOOD_KEYWORDS = {
+  empathy: ["friend", "sad", "classmate", "left out", "bully", "lonel", "feel", "empathy", "care", "support"],
+  honesty:  ["honest", "truth", "wrong", "sorry", "lie", "cheat", "blame", "found", "break", "wallet", "rumor"],
+  safety:   ["safe", "online", "danger", "password", "personal", "address", "internet", "footprint", "click"],
+  anger:    ["angry", "anger", "calm", "frustrat", "upset", "shout", "fight"],
+};
+const MOOD_META = {
+  empathy: { label: "Empathy & Social", emoji: "💛" },
+  honesty:  { label: "Honesty & Values", emoji: "🤝" },
+  safety:   { label: "Safety Awareness", emoji: "🛡️" },
+  anger:    { label: "Emotional Control", emoji: "😌" },
+};
+
+function analyzeMood(assessments) {
+  const scores = { empathy: { c: 0, t: 0 }, honesty: { c: 0, t: 0 }, safety: { c: 0, t: 0 }, anger: { c: 0, t: 0 } };
+  assessments.forEach(({ question, correct }) => {
+    const q = (question || "").toLowerCase();
+    Object.entries(MOOD_KEYWORDS).forEach(([cat, keys]) => {
+      if (keys.some((k) => q.includes(k))) {
+        scores[cat].t++;
+        if (correct) scores[cat].c++;
+      }
+    });
+  });
+  const cats = Object.entries(scores)
+    .filter(([, s]) => s.t > 0)
+    .map(([cat, s]) => ({ cat, pct: Math.round((s.c / s.t) * 100), ...MOOD_META[cat] }));
+
+  const recent = assessments.slice(0, 5);
+  const older  = assessments.slice(5, 10);
+  const rScore = recent.length ? recent.filter((a) => a.correct).length / recent.length : null;
+  const oScore = older.length  ? older.filter((a) => a.correct).length / older.length   : null;
+  const trend  = rScore === null ? null
+    : oScore === null ? "new"
+    : rScore > oScore + 0.1 ? "up"
+    : rScore < oScore - 0.1 ? "down"
+    : "stable";
+
+  const overall = cats.length ? Math.round(cats.reduce((s, c) => s + c.pct, 0) / cats.length) : null;
+  const mood = overall === null ? null
+    : overall >= 70 ? { label: "Positive Engagement", emoji: "😊", color: "#16a34a" }
+    : overall >= 45 ? { label: "Steady Progress",     emoji: "😐", color: "#d97706" }
+    :                 { label: "Needs Attention",      emoji: "😟", color: "#dc2626" };
+  return { cats, trend, overall, mood };
+}
+
 /* ── Shared colors ── */
 const C = {
   purple: "#6b6bd6", green: "#3aa67c", orange: "#f59e0b",
@@ -99,7 +146,9 @@ const sidebarItems = [
   { id: "vaccines",   label: "Vaccine Planner", icon: "💉" },
   { id: "nutrition",  label: "Nutrition Guide", icon: "🥗" },
   { id: "community",  label: "Community",       icon: "👥" },
+  { id: "consult",    label: "Ask Expert",      icon: "🩺" },
   { id: "resources",  label: "Resources",       icon: "📚" },
+  { id: "aichat",    label: "AI Assistant",    icon: "🤖" },
 ];
 
 export default function ParentDash() {
@@ -123,6 +172,24 @@ export default function ParentDash() {
   const [postCategory, setPostCategory] = useState("Special Moment");
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
+
+  /* Comments state */
+  const [expandedComments, setExpandedComments] = useState(new Set());
+  const [postComments, setPostComments] = useState({});      // { postId: [{...}] }
+  const [commentTexts, setCommentTexts] = useState({});      // { postId: string }
+  const [submittingComment, setSubmittingComment] = useState(null); // postId currently submitting
+
+  /* Consultation state */
+  const [myConsultations, setMyConsultations] = useState([]);
+  const [consForm, setConsForm] = useState({ childName: "", childAge: "", concern: "" });
+  const [submittingCons, setSubmittingCons] = useState(false);
+  const [consError, setConsError] = useState("");
+
+  /* AI Chat state */
+  const [chatMessages, setChatMessages] = useState([]); // [{ role: "user"|"assistant", content: string }]
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef(null);
 
   /* Child connection state */
   const [linkedChild, setLinkedChild] = useState(null);
@@ -155,21 +222,22 @@ export default function ParentDash() {
     return unsub;
   }, [currentUser]);
 
-  /* ── Load linked child profile + assessments ── */
+  /* ── Load linked child profile + assessments (both real-time) ── */
   useEffect(() => {
     if (!userProfile?.linkedChildUid) { setLinkedChild(null); return; }
-    getDoc(doc(db, "users", userProfile.linkedChildUid)).then((snap) => {
+    const unsubProfile = onSnapshot(doc(db, "users", userProfile.linkedChildUid), (snap) => {
       if (snap.exists()) setLinkedChild({ uid: snap.id, ...snap.data() });
+      else setLinkedChild(null);
     });
     const q = query(
       collection(db, "assessments"),
       where("childUid", "==", userProfile.linkedChildUid),
       orderBy("timestamp", "desc")
     );
-    const unsub = onSnapshot(q, (snap) => {
+    const unsubAssessments = onSnapshot(q, (snap) => {
       setLinkedChildAssessments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
-    return unsub;
+    return () => { unsubProfile(); unsubAssessments(); };
   }, [userProfile?.linkedChildUid]);
 
   /* ── Link child by email ── */
@@ -198,6 +266,48 @@ export default function ParentDash() {
     }
   }
 
+  /* ── Load parent's own consultations (real-time, no composite index needed) ── */
+  useEffect(() => {
+    if (!currentUser) return;
+    // Only filter by parentUid — sort client-side to avoid needing a composite index
+    const q = query(
+      collection(db, "consultations"),
+      where("parentUid", "==", currentUser.uid)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const docs = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+      setMyConsultations(docs);
+    });
+    return unsub;
+  }, [currentUser]);
+
+  /* ── Submit consultation request ── */
+  async function submitConsultation(e) {
+    e.preventDefault();
+    if (!consForm.childName.trim() || !consForm.concern.trim()) return;
+    setConsError("");
+    setSubmittingCons(true);
+    try {
+      await addDoc(collection(db, "consultations"), {
+        parentUid: currentUser.uid,
+        parentName: name,
+        childName: consForm.childName.trim(),
+        childAge: consForm.childAge ? +consForm.childAge : null,
+        concern: consForm.concern.trim(),
+        status: "pending",
+        response: null,
+        createdAt: serverTimestamp(),
+      });
+      setConsForm({ childName: "", childAge: "", concern: "" });
+    } catch (err) {
+      setConsError("Failed to submit. Please try again. (" + err.message + ")");
+    } finally {
+      setSubmittingCons(false);
+    }
+  }
+
   /* ── Unlink child ── */
   async function unlinkChild() {
     if (!userProfile?.linkedChildUid) return;
@@ -205,6 +315,32 @@ export default function ParentDash() {
     await updateDoc(doc(db, "users", userProfile.linkedChildUid), { linkedParentUid: null, linkedParentName: null });
     setLinkedChild(null);
     setLinkedChildAssessments([]);
+  }
+
+  /* ── AI Chat ── */
+  async function sendChatMessage(text) {
+    const question = (text || chatInput).trim();
+    if (!question || chatLoading) return;
+    setChatInput("");
+    const updated = [...chatMessages, { role: "user", content: question }];
+    setChatMessages(updated);
+    setChatLoading(true);
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: updated }),
+      });
+      const data = await res.json();
+      const reply = data.reply || data.error || "Sorry, something went wrong.";
+      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+    } catch {
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "Couldn't reach the AI. Please check your connection and try again." }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
   }
 
   async function handleLogout() {
@@ -277,6 +413,44 @@ export default function ParentDash() {
       likes: liked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
       likesCount: liked ? Math.max(0, (post.likesCount || 1) - 1) : (post.likesCount || 0) + 1
     });
+  }
+
+  /* ── Community: toggle comments open/closed & load them ── */
+  async function toggleComments(postId) {
+    const isOpen = expandedComments.has(postId);
+    if (isOpen) {
+      setExpandedComments((prev) => { const s = new Set(prev); s.delete(postId); return s; });
+      return;
+    }
+    setExpandedComments((prev) => new Set([...prev, postId]));
+    if (!postComments[postId]) {
+      const q = query(
+        collection(db, "community", postId, "comments"),
+        orderBy("timestamp", "asc")
+      );
+      const snap = await getDocs(q);
+      setPostComments((prev) => ({ ...prev, [postId]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }));
+    }
+  }
+
+  /* ── Community: submit a comment ── */
+  async function submitComment(postId) {
+    const text = (commentTexts[postId] || "").trim();
+    if (!text || !currentUser) return;
+    setSubmittingComment(postId);
+    try {
+      const ref = await addDoc(collection(db, "community", postId, "comments"), {
+        uid: currentUser.uid,
+        displayName: name,
+        text,
+        timestamp: serverTimestamp(),
+      });
+      const newComment = { id: ref.id, uid: currentUser.uid, displayName: name, text, timestamp: null };
+      setPostComments((prev) => ({ ...prev, [postId]: [...(prev[postId] || []), newComment] }));
+      setCommentTexts((prev) => ({ ...prev, [postId]: "" }));
+    } finally {
+      setSubmittingComment(null);
+    }
   }
 
   /* ── Style helpers ── */
@@ -495,6 +669,41 @@ export default function ParentDash() {
                       </span>
                     </div>
                   ))}
+
+                  {/* Mood analysis */}
+                  {linkedChildAssessments.length >= 3 && (() => {
+                    const { cats, trend, mood } = analyzeMood(linkedChildAssessments);
+                    if (!mood) return null;
+                    const trendLabel = trend === "up" ? "↗ Improving" : trend === "down" ? "↘ Declining" : trend === "new" ? "⭐ Just started" : "→ Stable";
+                    const trendColor = trend === "up" ? "#16a34a" : trend === "down" ? "#dc2626" : "#888";
+                    return (
+                      <div style={{ marginTop: "20px", background: "#f8f9ff", borderRadius: "12px", padding: "16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                          <div style={{ fontWeight: "700", fontSize: "14px", color: "#1a1a2e" }}>🧠 Emotional Wellness</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "12px", fontWeight: "700", color: trendColor }}>{trendLabel}</span>
+                            <span style={{ fontSize: "13px", fontWeight: "700", color: mood.color, background: mood.color + "18", padding: "3px 10px", borderRadius: "20px" }}>
+                              {mood.emoji} {mood.label}
+                            </span>
+                          </div>
+                        </div>
+                        {cats.map((c) => (
+                          <div key={c.cat} style={{ marginBottom: "10px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#555", marginBottom: "4px" }}>
+                              <span>{c.emoji} {c.label}</span>
+                              <span style={{ fontWeight: "700" }}>{c.pct}%</span>
+                            </div>
+                            <div style={{ background: "#e8eaf0", borderRadius: "20px", height: "6px" }}>
+                              <div style={{ width: `${c.pct}%`, background: c.pct >= 70 ? "#16a34a" : c.pct >= 45 ? "#d97706" : "#ef4444", borderRadius: "20px", height: "6px", transition: "width 0.4s" }} />
+                            </div>
+                          </div>
+                        ))}
+                        {cats.length === 0 && (
+                          <p style={{ fontSize: "13px", color: "#aaa" }}>Take more quizzes to see emotional insights.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -508,6 +717,7 @@ export default function ParentDash() {
                   { label: "Nutrition Guide", icon: "🥗", tab: "nutrition" },
                   { label: "Community Forum", icon: "👥", tab: "community" },
                   { label: "Browse Resources", icon: "📚", tab: "resources" },
+                  { label: "AI Assistant", icon: "🤖", tab: "aichat" },
                 ].map((a) => (
                   <button
                     key={a.tab}
@@ -953,20 +1163,65 @@ export default function ParentDash() {
                           ))}
                         </div>
 
-                        {/* Divider */}
+                        {/* Action bar */}
                         <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "12px", display: "flex", justifyContent: "space-around" }}>
                           <button onClick={() => toggleLike(post)}
                             style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: liked ? "#2563eb" : "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}
                           >
                             👍 Like ({post.likesCount || 0})
                           </button>
-                          <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}>
-                            💬 Comment (0)
+                          <button onClick={() => toggleComments(post.id)}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: expandedComments.has(post.id) ? C.purple : "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}
+                          >
+                            💬 Comment ({postComments[post.id]?.length ?? 0})
                           </button>
                           <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", color: "#888", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}>
                             ↗ Share
                           </button>
                         </div>
+
+                        {/* Comments section */}
+                        {expandedComments.has(post.id) && (
+                          <div style={{ marginTop: "14px", borderTop: `1px solid ${C.border}`, paddingTop: "14px" }}>
+                            {/* Existing comments */}
+                            {(postComments[post.id] || []).map((c) => (
+                              <div key={c.id} style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+                                <div style={{ ...s.avatar, width: "30px", height: "30px", fontSize: "12px", flexShrink: 0, background: avatarColor(c.displayName) }}>
+                                  {c.displayName?.[0]?.toUpperCase() || "P"}
+                                </div>
+                                <div style={{ flex: 1, background: "#f4f6fb", borderRadius: "12px", padding: "8px 12px" }}>
+                                  <div style={{ fontWeight: "700", fontSize: "13px", color: "#1a1a2e", marginBottom: "2px" }}>{c.displayName}</div>
+                                  <div style={{ fontSize: "14px", color: "#333", lineHeight: "1.5" }}>{c.text}</div>
+                                </div>
+                              </div>
+                            ))}
+                            {postComments[post.id]?.length === 0 && (
+                              <p style={{ fontSize: "13px", color: "#bbb", marginBottom: "12px" }}>No comments yet. Be the first!</p>
+                            )}
+                            {/* New comment input */}
+                            <div style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
+                              <div style={{ ...s.avatar, width: "30px", height: "30px", fontSize: "12px", flexShrink: 0 }}>
+                                {name?.[0]?.toUpperCase() || "P"}
+                              </div>
+                              <div style={{ flex: 1, background: "#f4f6fb", borderRadius: "20px", padding: "8px 14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                <input
+                                  value={commentTexts[post.id] || ""}
+                                  onChange={(e) => setCommentTexts((prev) => ({ ...prev, [post.id]: e.target.value }))}
+                                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComment(post.id); } }}
+                                  placeholder="Write a comment…"
+                                  style={{ flex: 1, border: "none", background: "transparent", fontSize: "14px", outline: "none", fontFamily: "inherit" }}
+                                />
+                                <button
+                                  onClick={() => submitComment(post.id)}
+                                  disabled={!commentTexts[post.id]?.trim() || submittingComment === post.id}
+                                  style={{ background: C.purple, color: "white", border: "none", borderRadius: "50%", width: "28px", height: "28px", cursor: "pointer", fontSize: "13px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: !commentTexts[post.id]?.trim() ? 0.4 : 1 }}
+                                >
+                                  ➤
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1016,6 +1271,100 @@ export default function ParentDash() {
         })()}
 
         {/* ── RESOURCES ── */}
+        {activeTab === "consult" && (
+          <>
+            <div style={s.pageHeader}>
+              <h1 style={s.greeting}>Ask an Expert 🩺</h1>
+              <p style={s.subGreet}>Submit a concern and a certified expert will respond within 24–48 hours.</p>
+            </div>
+
+            {/* Request form */}
+            <div style={s.sectionCard}>
+              <div style={s.sectionTitle}>New Consultation Request</div>
+              <form onSubmit={submitConsultation} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                  <div>
+                    <label style={{ fontSize: "13px", fontWeight: "600", color: "#555", display: "block", marginBottom: "6px" }}>Child's Name *</label>
+                    <input
+                      value={consForm.childName}
+                      onChange={(e) => setConsForm((f) => ({ ...f, childName: e.target.value }))}
+                      placeholder="e.g. Aarav"
+                      required
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: "1.5px solid #e0e0e0", fontSize: "14px", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "13px", fontWeight: "600", color: "#555", display: "block", marginBottom: "6px" }}>Child's Age (years)</label>
+                    <input
+                      type="number" min="0" max="18"
+                      value={consForm.childAge}
+                      onChange={(e) => setConsForm((f) => ({ ...f, childAge: e.target.value }))}
+                      placeholder="e.g. 3"
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: "1.5px solid #e0e0e0", fontSize: "14px", boxSizing: "border-box" }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: "13px", fontWeight: "600", color: "#555", display: "block", marginBottom: "6px" }}>Describe Your Concern *</label>
+                  <textarea
+                    value={consForm.concern}
+                    onChange={(e) => setConsForm((f) => ({ ...f, concern: e.target.value }))}
+                    placeholder="Describe the issue in as much detail as possible — symptoms, duration, anything you've already tried..."
+                    required
+                    rows={4}
+                    style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: "1.5px solid #e0e0e0", fontSize: "14px", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+                  <button
+                    type="submit"
+                    disabled={submittingCons}
+                    style={{ padding: "11px 28px", background: C.purple, color: "white", border: "none", borderRadius: "10px", fontWeight: "700", fontSize: "14px", cursor: submittingCons ? "not-allowed" : "pointer", opacity: submittingCons ? 0.7 : 1 }}
+                  >
+                    {submittingCons ? "Submitting…" : "Submit Request"}
+                  </button>
+                  {consError && (
+                    <span style={{ fontSize: "13px", color: "#dc2626", fontWeight: "600" }}>⚠️ {consError}</span>
+                  )}
+                </div>
+              </form>
+            </div>
+
+            {/* Past requests */}
+            <div style={s.sectionCard}>
+              <div style={s.sectionTitle}>Your Requests</div>
+              {myConsultations.length === 0 ? (
+                <p style={{ fontSize: "14px", color: "#aaa" }}>No requests yet. Submit one above!</p>
+              ) : (
+                myConsultations.map((c) => (
+                  <div key={c.id} style={{ padding: "16px", borderRadius: "12px", border: "1.5px solid #e0e0e0", marginBottom: "14px", background: "#fafafe" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <div style={{ fontWeight: "700", color: "#1a1a2e" }}>{c.childName}{c.childAge ? `, age ${c.childAge}` : ""}</div>
+                      <span style={{
+                        fontSize: "12px", fontWeight: "700", padding: "3px 10px", borderRadius: "20px",
+                        background: c.status === "reviewed" ? "#dcfce7" : "#fef9c3",
+                        color: c.status === "reviewed" ? "#16a34a" : "#b45309"
+                      }}>
+                        {c.status === "reviewed" ? "✅ Answered" : "⏳ Pending"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#555", marginBottom: c.response ? "10px" : 0 }}><strong>Concern:</strong> {c.concern}</div>
+                    {c.response && (
+                      <div style={{ padding: "12px 14px", background: "#f0fdf4", borderRadius: "10px", borderLeft: "4px solid #16a34a" }}>
+                        <div style={{ fontSize: "12px", fontWeight: "700", color: "#16a34a", marginBottom: "4px" }}>🩺 Expert Response{c.expertName ? ` · ${c.expertName}` : ""}</div>
+                        <div style={{ fontSize: "13px", color: "#1a1a2e", lineHeight: "1.6" }}>{c.response}</div>
+                      </div>
+                    )}
+                    <div style={{ fontSize: "11px", color: "#bbb", marginTop: "8px" }}>
+                      {c.createdAt?.toDate ? c.createdAt.toDate().toLocaleDateString("en-IN") : ""}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+
         {activeTab === "resources" && (
           <>
             <div style={s.pageHeader}>
@@ -1044,6 +1393,196 @@ export default function ParentDash() {
             </div>
           </>
         )}
+
+        {/* ── AI ASSISTANT ── */}
+        {activeTab === "aichat" && (() => {
+          const SUGGESTIONS = [
+            "What are the speech milestones for a 2-year-old?",
+            "How much sleep does a 4-year-old need?",
+            "My child refuses vegetables — what can I do?",
+            "When should I be concerned about my child's weight?",
+            "How can I help my child deal with tantrums?",
+            "What vaccines are due at 18 months?",
+          ];
+          return (
+            <>
+              <div style={s.pageHeader}>
+                <h1 style={s.greeting}>AI Parenting Assistant 🤖</h1>
+                <p style={s.subGreet}>Ask anything about child health, development, nutrition, and more — powered by Claude AI.</p>
+              </div>
+
+              <div style={{ display: "flex", gap: "24px", height: "calc(100vh - 200px)" }}>
+
+                {/* ── Chat panel ── */}
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "white", borderRadius: "16px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+
+                  {/* Messages area */}
+                  <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: "18px" }}>
+
+                    {chatMessages.length === 0 && (
+                      <div style={{ textAlign: "center", margin: "auto", paddingBottom: "24px" }}>
+                        <div style={{ fontSize: "52px", marginBottom: "16px" }}>🤖</div>
+                        <div style={{ fontSize: "18px", fontWeight: "700", color: "#1a1a2e", marginBottom: "8px" }}>Hello, {name.split(" ")[0]}!</div>
+                        <div style={{ fontSize: "14px", color: "#888", maxWidth: "380px", margin: "0 auto", lineHeight: "1.6" }}>
+                          I'm your AI parenting assistant. Ask me anything about your child's development, health, nutrition, or routines.
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "center", marginTop: "28px", maxWidth: "500px", margin: "28px auto 0" }}>
+                          {SUGGESTIONS.map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => sendChatMessage(s)}
+                              style={{
+                                padding: "9px 16px", borderRadius: "20px",
+                                border: `1.5px solid ${C.purple}`, background: "rgba(107,107,214,0.06)",
+                                color: C.purple, fontSize: "13px", fontWeight: "500", cursor: "pointer",
+                                textAlign: "left", lineHeight: "1.4"
+                              }}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {chatMessages.map((msg, i) => (
+                      <div key={i} style={{ display: "flex", gap: "12px", flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
+                        {/* Avatar */}
+                        <div style={{
+                          width: "36px", height: "36px", borderRadius: "50%", flexShrink: 0,
+                          background: msg.role === "user"
+                            ? `linear-gradient(135deg,${C.purple},#8b5cf6)`
+                            : "linear-gradient(135deg,#1a1a2e,#16213e)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: "16px", color: "white", fontWeight: "700"
+                        }}>
+                          {msg.role === "user" ? name[0].toUpperCase() : "🤖"}
+                        </div>
+
+                        {/* Bubble */}
+                        <div style={{
+                          maxWidth: "68%",
+                          padding: "14px 18px",
+                          borderRadius: msg.role === "user" ? "18px 4px 18px 18px" : "4px 18px 18px 18px",
+                          background: msg.role === "user"
+                            ? `linear-gradient(135deg,${C.purple},#8b5cf6)`
+                            : "#f4f6fb",
+                          color: msg.role === "user" ? "white" : "#1a1a2e",
+                          fontSize: "14px", lineHeight: "1.65",
+                          boxShadow: msg.role === "user" ? "0 2px 8px rgba(107,107,214,0.3)" : "0 1px 4px rgba(0,0,0,0.07)",
+                          whiteSpace: "pre-wrap",
+                        }}>
+                          {msg.content}
+                        </div>
+                      </div>
+                    ))}
+
+                    {chatLoading && (
+                      <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                        <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "linear-gradient(135deg,#1a1a2e,#16213e)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", flexShrink: 0 }}>🤖</div>
+                        <div style={{ padding: "14px 20px", borderRadius: "4px 18px 18px 18px", background: "#f4f6fb", display: "flex", gap: "5px", alignItems: "center" }}>
+                          {[0, 1, 2].map((d) => (
+                            <div key={d} style={{
+                              width: "7px", height: "7px", borderRadius: "50%", background: C.purple,
+                              animation: "bounce 1.2s infinite",
+                              animationDelay: `${d * 0.2}s`,
+                              opacity: 0.7
+                            }} />
+                          ))}
+                          <style>{`@keyframes bounce { 0%,80%,100%{transform:scale(0.8);opacity:0.5} 40%{transform:scale(1.2);opacity:1} }`}</style>
+                        </div>
+                      </div>
+                    )}
+
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Input bar */}
+                  <div style={{ padding: "16px 24px", borderTop: `1.5px solid ${C.border}`, display: "flex", gap: "12px", alignItems: "flex-end", background: "white" }}>
+                    <textarea
+                      rows={1}
+                      placeholder="Ask anything about your child…"
+                      value={chatInput}
+                      onChange={(e) => {
+                        setChatInput(e.target.value);
+                        e.target.style.height = "auto";
+                        e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+                      }}
+                      style={{
+                        flex: 1, padding: "11px 16px", borderRadius: "12px",
+                        border: `1.5px solid ${C.border}`, fontSize: "14px",
+                        outline: "none", resize: "none", lineHeight: "1.5",
+                        fontFamily: "system-ui,sans-serif", background: "#fafafe",
+                        overflowY: "hidden", minHeight: "44px",
+                      }}
+                    />
+                    <button
+                      onClick={() => sendChatMessage()}
+                      disabled={!chatInput.trim() || chatLoading}
+                      style={{
+                        width: "44px", height: "44px", borderRadius: "12px", flexShrink: 0,
+                        background: chatInput.trim() && !chatLoading
+                          ? `linear-gradient(135deg,${C.purple},#8b5cf6)`
+                          : "#e8eaf0",
+                        border: "none", cursor: chatInput.trim() && !chatLoading ? "pointer" : "not-allowed",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "18px", transition: "all 0.2s",
+                        boxShadow: chatInput.trim() && !chatLoading ? "0 2px 8px rgba(107,107,214,0.35)" : "none"
+                      }}
+                    >
+                      ➤
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── Right panel: tips ── */}
+                <div style={{ width: "240px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "16px" }}>
+
+                  <div style={{ ...s.sectionCard, marginBottom: 0 }}>
+                    <div style={{ ...s.sectionTitle, marginBottom: "14px" }}>💡 Try asking…</div>
+                    {SUGGESTIONS.map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => sendChatMessage(q)}
+                        style={{
+                          display: "block", width: "100%", textAlign: "left",
+                          padding: "10px 12px", borderRadius: "10px",
+                          border: `1px solid ${C.border}`, background: "#fafafe",
+                          fontSize: "13px", color: "#444", cursor: "pointer",
+                          marginBottom: "8px", lineHeight: "1.4", fontFamily: "system-ui,sans-serif"
+                        }}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ ...s.sectionCard, marginBottom: 0, background: "linear-gradient(135deg,rgba(107,107,214,0.08),rgba(139,92,246,0.08))", border: `1.5px solid rgba(107,107,214,0.2)` }}>
+                    <div style={{ fontSize: "13px", color: "#555", lineHeight: "1.6" }}>
+                      <strong style={{ color: C.purple }}>Note:</strong> KidRoots AI gives general guidance only. For medical concerns, always consult your child's doctor.
+                    </div>
+                  </div>
+
+                  {chatMessages.length > 0 && (
+                    <button
+                      onClick={() => setChatMessages([])}
+                      style={{
+                        padding: "10px", borderRadius: "10px",
+                        border: `1px solid ${C.border}`, background: "white",
+                        fontSize: "13px", color: "#888", cursor: "pointer", fontWeight: "500"
+                      }}
+                    >
+                      🗑 Clear conversation
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
       </main>
     </div>
