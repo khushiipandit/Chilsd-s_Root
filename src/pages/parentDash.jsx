@@ -189,6 +189,7 @@ export default function ParentDash() {
   const [chatMessages, setChatMessages] = useState([]); // [{ role: "user"|"assistant", content: string }]
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [useChildContext, setUseChildContext] = useState(false);
   const chatEndRef = useRef(null);
 
   /* Child connection state */
@@ -342,6 +343,34 @@ export default function ParentDash() {
   }
 
   /* ── AI Chat ── */
+  function buildChildContext() {
+    if (!linkedChild) return null;
+    const { cats, trend, mood } = analyzeMood(linkedChildAssessments);
+    const recentQuizzes = linkedChildAssessments.slice(0, 8).map((a) =>
+      `  ${a.correct ? "✅" : "❌"} "${a.question}" — ${a.correct ? `+${a.xpEarned} XP` : "incorrect"}`
+    ).join("\n");
+    const moodLines = cats.map((c) => `  - ${c.label}: ${c.pct}%`).join("\n");
+    const trendLabel = trend === "up" ? "Improving" : trend === "down" ? "Declining" : "Stable";
+    const screenLine = linkedChild.screenTimeLimit
+      ? `${Math.floor((childTodayUsage || 0) / 60)}m used today out of ${linkedChild.screenTimeLimit}m limit`
+      : "No screen time limit set";
+
+    return `The parent is asking about their linked child. Here is the child's current data from the KidRoots platform:
+
+Child: ${linkedChild.displayName}
+Level: ${Math.floor((linkedChild.xp || 0) / 100) + 1} | XP: ${linkedChild.xp || 0}
+Screen Time Today: ${screenLine}
+
+Recent Quiz Results (last ${Math.min(8, linkedChildAssessments.length)}):
+${recentQuizzes || "  No quizzes taken yet."}
+
+Emotional Wellness Analysis:
+${moodLines || "  Not enough data yet."}
+Overall Mood: ${mood ? `${mood.emoji} ${mood.label}` : "Insufficient data"} | Trend: ${trendLabel}
+
+Use this data to give personalised, specific advice to the parent about their child.`;
+  }
+
   async function sendChatMessage(text) {
     const question = (text || chatInput).trim();
     if (!question || chatLoading) return;
@@ -351,10 +380,12 @@ export default function ParentDash() {
     setChatLoading(true);
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     try {
+      const body = { messages: updated };
+      if (useChildContext && linkedChild) body.childContext = buildChildContext();
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updated }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       const reply = data.reply || data.error || "Sorry, something went wrong.";
@@ -1500,7 +1531,14 @@ export default function ParentDash() {
 
         {/* ── AI ASSISTANT ── */}
         {activeTab === "aichat" && (() => {
-          const SUGGESTIONS = [
+          const SUGGESTIONS = useChildContext && linkedChild ? [
+            `How is ${linkedChild.displayName?.split(" ")[0]} doing emotionally?`,
+            `What activities would help improve ${linkedChild.displayName?.split(" ")[0]}'s weak areas?`,
+            `Is ${linkedChild.displayName?.split(" ")[0]}'s screen time appropriate for their age?`,
+            `How can I support ${linkedChild.displayName?.split(" ")[0]}'s emotional development?`,
+            `What do ${linkedChild.displayName?.split(" ")[0]}'s quiz results tell me about their values?`,
+            `Give me a weekly plan based on my child's current progress.`,
+          ] : [
             "What are the speech milestones for a 2-year-old?",
             "How much sleep does a 4-year-old need?",
             "My child refuses vegetables — what can I do?",
@@ -1510,9 +1548,37 @@ export default function ParentDash() {
           ];
           return (
             <>
-              <div style={s.pageHeader}>
-                <h1 style={s.greeting}>AI Parenting Assistant 🤖</h1>
-                <p style={s.subGreet}>Ask anything about child health, development, nutrition, and more — powered by Claude AI.</p>
+              <div style={{ ...s.pageHeader, display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h1 style={s.greeting}>AI Parenting Assistant 🤖</h1>
+                  <p style={s.subGreet}>Ask anything about child health, development, nutrition, and more.</p>
+                </div>
+                {/* Child context toggle */}
+                <button
+                  onClick={() => {
+                    if (!linkedChild) return;
+                    setUseChildContext((v) => !v);
+                    setChatMessages([]);
+                  }}
+                  title={linkedChild ? `Toggle child data context (${linkedChild.displayName})` : "Link a child account first"}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "10px",
+                    padding: "10px 18px", borderRadius: "30px", border: "none", cursor: linkedChild ? "pointer" : "not-allowed",
+                    background: useChildContext && linkedChild ? `linear-gradient(135deg,${C.purple},#8b5cf6)` : "#f0f0f8",
+                    color: useChildContext && linkedChild ? "white" : linkedChild ? "#555" : "#bbb",
+                    fontWeight: "600", fontSize: "13px", transition: "all 0.2s",
+                    boxShadow: useChildContext && linkedChild ? "0 2px 10px rgba(107,107,214,0.35)" : "none",
+                  }}
+                >
+                  <span style={{ fontSize: "15px" }}>{useChildContext && linkedChild ? "🧒" : "👤"}</span>
+                  {useChildContext && linkedChild
+                    ? `Using ${linkedChild.displayName?.split(" ")[0]}'s data`
+                    : linkedChild ? "Use child's data" : "No child linked"}
+                  {/* Toggle pill indicator */}
+                  <div style={{ width: "32px", height: "18px", borderRadius: "99px", background: useChildContext && linkedChild ? "rgba(255,255,255,0.35)" : "#ddd", position: "relative", flexShrink: 0 }}>
+                    <div style={{ position: "absolute", top: "3px", left: useChildContext && linkedChild ? "17px" : "3px", width: "12px", height: "12px", borderRadius: "50%", background: "white", transition: "left 0.2s" }} />
+                  </div>
+                </button>
               </div>
 
               <div style={{ display: "flex", gap: "24px", height: "calc(100vh - 200px)" }}>
@@ -1525,10 +1591,12 @@ export default function ParentDash() {
 
                     {chatMessages.length === 0 && (
                       <div style={{ textAlign: "center", margin: "auto", paddingBottom: "24px" }}>
-                        <div style={{ fontSize: "52px", marginBottom: "16px" }}>🤖</div>
+                        <div style={{ fontSize: "52px", marginBottom: "16px" }}>{useChildContext && linkedChild ? "🧒" : "🤖"}</div>
                         <div style={{ fontSize: "18px", fontWeight: "700", color: "#1a1a2e", marginBottom: "8px" }}>Hello, {name.split(" ")[0]}!</div>
                         <div style={{ fontSize: "14px", color: "#888", maxWidth: "380px", margin: "0 auto", lineHeight: "1.6" }}>
-                          I'm your AI parenting assistant. Ask me anything about your child's development, health, nutrition, or routines.
+                          {useChildContext && linkedChild
+                            ? `I have ${linkedChild.displayName?.split(" ")[0]}'s quiz results, mood analysis, and screen time loaded. Ask me anything specific about them.`
+                            : "I'm your AI parenting assistant. Ask me anything about your child's development, health, nutrition, or routines."}
                         </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "center", marginTop: "28px", maxWidth: "500px", margin: "28px auto 0" }}>
                           {SUGGESTIONS.map((s) => (

@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { messages } = req.body;
+  const { messages, childContext } = req.body;
 
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages array is required" });
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: childContext ? `${SYSTEM_PROMPT}\n\n${childContext}` : SYSTEM_PROMPT },
           ...messages,
         ],
         max_tokens: 1024,
