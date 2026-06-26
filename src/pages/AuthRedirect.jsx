@@ -15,8 +15,13 @@ function AuthRedirect() {
 
   useEffect(() => {
     if (!loading) {
-      const path = ROLE_ROUTES[userProfile?.role] || "/parent";
-      navigate(path, { replace: true });
+      const path = ROLE_ROUTES[userProfile?.role];
+      if (path) {
+        navigate(path, { replace: true });
+      } else {
+        // No valid role found — send back to auth so the user can sign in correctly
+        navigate("/auth", { replace: true });
+      }
     }
   }, [userProfile, loading, navigate]);
 
